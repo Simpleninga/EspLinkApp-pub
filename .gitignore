@@ -1,0 +1,15 @@
+node_modules/
+out/
+# 构建时从 ../.env 生成，带 DEVICE_TOKEN
+www/config.js
+# 构建时生成：内置界面的版本号
+www/version.js
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+ios/App/build/
+ios/App/App/public/
+ios/DerivedData/

@@ -1,0 +1,63 @@
+name: ios
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Select newest Xcode
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "use $X"
+          sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      # www/config.js 带密钥不进库,这里放个空的占位;装包前在本机把真的塞进 IPA
+      - name: Sync web assets
+        run: |
+          [ -f www/config.js ] || echo "window.ESP_CONFIG = {};" > www/config.js
+          # 内置界面的版本号（跟服务器 /app/bundle 同一算法：三个文件拼起来 sha1 前 12 位），一样就不热更新下载
+          echo "window.UI_BUNDLED = \"$(cat www/index.html www/style.css www/app.js | shasum | cut -c1-12)\";" > www/version.js
+          cat www/version.js
+          # 锁文件是在腾讯云上生成的,指向它的内网镜像,这里换回官方源
+          sed -i '' 's#http://mirrors.tencentyun.com/npm/#https://registry.npmjs.org/#g' package-lock.json
+          npm ci --no-audit --no-fund
+          npx cap sync ios
+
+      # 版本号每次编都涨（1.<run_number>）：iPhone 上 SideStore 靠它认出新版、提示更新
+      - name: Build unsigned IPA
+        working-directory: ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -derivedDataPath build -quiet \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION=1.$((${{ github.run_number }} + 30)) CURRENT_PROJECT_VERSION=$((${{ github.run_number }} + 30)) build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          for f in Payload/App.app/Frameworks/*.framework; do
+            if [ -e "$f" ]; then codesign -f -s - --timestamp=none "$f"; fi
+          done
+          # 小组件扩展（小艺通话的实时活动）也先签上，Sideloadly 装的时候会整体重签
+          for f in Payload/App.app/PlugIns/*.appex; do
+            if [ -e "$f" ]; then codesign -f -s - --timestamp=none "$f"; fi
+          done
+          codesign -f -s - --timestamp=none Payload/App.app
+          ls -la Payload/App.app Payload/App.app/public Payload/App.app/PlugIns || true
+          zip -qry EspLink.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EspLink-ipa
+          path: ios/App/EspLink.ipa
+          retention-days: 14

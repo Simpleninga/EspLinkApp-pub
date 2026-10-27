@@ -1,0 +1,21 @@
+{
+  "name": "esp-link-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "小芽的手机 App：手机当成又一台遥控器，接 server.py 的 /ws",
+  "scripts": {
+    "build": "./build.sh"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/keyboard": "^8.0.6",
+    "@capgo/capacitor-inappbrowser": "^8.26.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}

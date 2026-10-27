@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
+<title>小芽</title>
+<link rel="stylesheet" href="style.css" id="css0">
+<script>window.SHELL_V = 6;   /* 6 = 带浏览器插件 CapgoInAppBrowser（App 内浏览器；网页层判断靠 plug("CapgoInAppBrowser")，不靠这个数）， 安装包版本：2 = iOS 声明了相机 / 相册权限，3 = 带原生模块 Link（录音、朗读、后台、通知）+ 键盘插件，4 = iOS 原生直接开相册 / 文件（Link.pick）、前台也弹定时提醒横幅，5 = iOS 原生朗读认 p24（24k 不压缩 PCM；安卓壳没做，p24Ok 里只认 iOS）（热更新只换 <body>，这行跟着安装包走） */</script>
+<script src="version.js"></script>
+<script src="boot.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="nav">
+      <button id="navBack" class="nav-btn" data-act="back" aria-label="返回"></button>
+      <button id="navMenu" class="nav-btn" data-act="drawer" aria-label="菜单"></button>
+      <div id="navMid"><div id="navTitle"></div><div id="navSub"></div></div>
+      <div id="navRight"></div>
+    </header>
+    <main id="stage"></main>
+    <footer id="bar"></footer>
+  </div>
+
+  <!-- 小芽通话（2026-10-15 用户：通话页只是个语音通道，只留通话的功能；对话都在首页看）：球 + 状态 + 字幕（关了声音时看回复）+ 静音 / 挂断 / 声音 -->
+  <section id="xy" hidden>
+    <header class="xy-top"><div class="xy-mid"><b>小芽</b><span id="xyStat"></span></div></header>
+    <div class="xy-stage">
+      <button class="orb big sprout" id="xyOrb" data-act="xyorb" aria-label="小芽"><i></i></button>
+      <div class="xy-state" id="xyState"></div>
+      <div class="xy-cap" id="xyCap"></div>
+    </div>
+    <footer class="xy-ctls">
+      <button class="xy-ctl" id="xyMute" data-act="xymute" aria-pressed="false"><span></span><em>静音</em></button>
+      <button class="xy-ctl red" data-act="xyhang"><span></span><em>挂断</em></button>
+      <button class="xy-ctl" id="xySnd" data-act="xysnd" aria-pressed="false"><span></span><em>声音</em></button>
+    </footer>
+  </section>
+
+  <div id="drawer"><div class="dw-scrim" data-act="dwclose"></div><nav class="dw-panel" id="dwPanel"></nav></div>
+
+  <div id="xyFloat" hidden><span class="orb sprout"><i></i></span><span class="fl-txt"><b></b><span></span></span><span class="xf-tab"></span></div>
+
+  <section id="login" hidden>
+    <div class="lg-box">
+      <span class="lg-orb"></span>
+      <h1>登录</h1>
+      <p class="lg-sub">用服务器上的账号登录，这台手机只用登录一次</p>
+      <div class="field"><input id="lgUser" placeholder="账号" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="field"><input id="lgPw" type="password" placeholder="密码" autocomplete="current-password" enterkeyhint="go"></div>
+      <div class="lg-err" id="lgErr"></div>
+      <button class="btn primary lg-go" id="lgGo" data-act="login">登录</button>
+      <button class="lg-srv" data-act="lgsrv">服务器地址</button>
+      <div class="field" id="lgSrvBox" hidden><textarea id="lgSrv" rows="2" spellcheck="false"></textarea></div>
+    </div>
+  </section>
+
+  <div id="recLayer">
+    <div class="rec-cancel"><span class="rec-cancel-ic"></span><span>上滑取消</span></div>
+    <div class="rec-mid">
+      <div class="rec-bubble"><canvas id="wave"></canvas></div>
+      <div class="rec-time">0:00</div>
+      <div class="rec-tip">松开 发送</div>
+    </div>
+  </div>
+
+  <div id="pop"></div>
+  <div id="viewer" role="dialog" aria-label="看大图"><img alt=""><button class="vw-x" aria-label="关闭"></button></div>
+  <div id="scrim"></div>
+  <div id="sheet" role="dialog"><div class="grab"></div><button class="sh-x" data-act="closeSheet" aria-label="关闭"></button><div id="sheetBody"></div></div>
+  <!-- 选附件：不能 hidden（iOS 的选择菜单从 input 所在的位置弹出来，藏起来就悬在半空），点之前挪到点的那个按钮上，透明、不接点按 -->
+  <input id="pickImg" class="pick-in" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+  <input id="pickCam" class="pick-in" type="file" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+  <input id="pickFile" class="pick-in" type="file" multiple tabindex="-1" aria-hidden="true">
+
+  <script src="capacitor.js"></script>
+  <script src="config.js"></script>
+  <!-- app.js 由 boot.js 加载：服务器下发过新界面就用下载的那份 -->
+</body>
+</html>
