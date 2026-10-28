@@ -317,7 +317,7 @@ final class SysSpeech {
         guard let r = rec, r.isAvailable else { return end(j, nil, "系统语音识别现在不可用") }
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true      // 超时的时候至少有最近一次的中间结果可用
-        req.addsPunctuation = true
+        if #available(iOS 16, *) { req.addsPunctuation = true }
         req.taskHint = .dictation
         req.contextualStrings = j.ctx              // 「Claude」「小芽」「小智」这类词，服务器随请求给
         if r.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
