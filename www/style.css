@@ -235,6 +235,12 @@ body.offline .status-line i { background: var(--danger); box-shadow: 0 0 0 3px v
 .pdf-doc { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .pdf-pg { display: block; margin: 0 0 10px; background: #fff; border-radius: 4px; box-shadow: 0 0 0 .5px var(--line), 0 2px 10px rgba(0, 0, 0, .12); overflow: hidden; }
 .pdf-pg canvas { display: block; }
+/* Word / PPT 在手机上直接渲染（docx-preview / pptx-renderer）：页的外观盖成跟 PDF 页一样；页宽靠 JS 设的 zoom 缩到屏宽 */
+.dx-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dx-doc .docx-wrapper { background: transparent !important; padding: 0 !important; align-items: flex-start !important; }
+.dx-doc .docx-wrapper > section.docx { margin: 0 0 10px !important; border-radius: 4px; box-shadow: 0 0 0 .5px var(--line), 0 2px 10px rgba(0, 0, 0, .12) !important; }
+.dx-doc, .dx-doc * { -webkit-user-select: text; user-select: text; }
+.pp-doc { min-height: 120px; }
 .fv-media { display: block; width: 100%; border-radius: 14px; background: #000; margin-bottom: 18px; }
 audio.fv-media { background: none; }
 .fv-tabs { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -243,7 +249,7 @@ audio.fv-media { background: none; }
 .fv-tbl { overflow: auto; margin: 0 -16px 14px; padding: 0 16px; max-height: calc(100vh - var(--top) - var(--bar-h) - 150px); -webkit-overflow-scrolling: touch; }
 .fv-tbl table { border-collapse: collapse; font-size: 13.5px; line-height: 1.45; width: max-content; min-width: 100%; }
 .fv-tbl th, .fv-tbl td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; max-width: 260px; min-width: 56px; overflow-wrap: break-word; user-select: text; -webkit-user-select: text; }
-.fv-tbl th { position: sticky; top: 0; background: var(--fill); font-weight: 600; white-space: nowrap; }
+.fv-tbl th { position: sticky; top: 0; background: linear-gradient(var(--fill-2), var(--fill-2)), var(--bg); font-weight: 600; white-space: nowrap; }   /* 表头要不透明：滚动时下面的行不能透出来 */
 .sys-box.fv { bottom: var(--bar-h); }
 .mm { overflow-x: auto; margin: .6em 0 1em; text-align: center; }
 .mm svg { max-width: 100%; height: auto; }
@@ -816,3 +822,21 @@ body[data-ctx="br"] #nav { display: none; }
 .br-wide .ic { width: 18px; height: 18px; }
 .br-wide.primary { background: var(--c); color: var(--on-c); }
 .br-err { padding-top: 60px; }
+/* 系统页的页面（演示 / 看板）竖屏：原生网页只占 16:10 那一块，下面留空 + 提示；背景截图按宽度铺 */
+.br-view.fixr { background-size: 100% auto; }
+.br-view.fixr::after { content: "横过来看，整个页面更清楚"; position: absolute; left: 0; right: 0; top: calc(var(--fx, 0px) + 14px); text-align: center; font-size: 13px; color: var(--text-3); pointer-events: none; }
+/* 全屏（网页里点了「全屏」）：藏起地址栏和底栏，网页撑满，只让开刘海 / 状态栏 / 横条 */
+.br.full .br-top, .br.full .br-bot { display: none; }
+.br.full .br-view { margin: var(--top) env(safe-area-inset-right, 0px) var(--bot) env(safe-area-inset-left, 0px); }
+/* 横屏：地址栏和底部按钮合成顶上一行（按钮在左、地址栏在右），网页占满剩下的；左右让开刘海 */
+@media (orientation: landscape) and (max-height: 520px) {
+  .br { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .br-bot { grid-area: 1 / 1; gap: 0; justify-content: flex-start; padding: 3px 2px 3px max(8px, env(safe-area-inset-left, 0px)); border-top: 0; border-bottom: .5px solid var(--line); }
+  .br-top { grid-area: 1 / 2; padding: calc(var(--top) + 3px) max(10px, env(safe-area-inset-right, 0px)) 3px 6px; }
+  .br-view { grid-area: 2 / 1 / 3 / 3; margin: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
+  .br-addr { height: 34px; }
+  .br-btn { width: 40px; height: 34px; }
+  .br-title { line-height: 34px; }
+  .br-wide { height: 34px; padding: 0 16px; }
+  .br.full .br-view { margin: var(--top) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); }
+}

@@ -8,6 +8,7 @@ import ActivityKit
 import AVFoundation
 import Capacitor
 import PhotosUI
+import Speech
 import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
@@ -237,6 +238,121 @@ struct Adpcm {
     }
 }
 
+// ---------------------------------------------------------------- 系统语音识别（2026-10-28）
+// 原来按住说话、小智 / 小芽通话都把音频传给服务器，服务器调百炼识别：要花钱，还会把中文短句听成英文。
+// 现在 hello 带 stt:1，服务器还是按音量切句，但切好后不送百炼，而是发 stt 请求「第 a~b 个采样」（s = ptt 按住说话 / live 通话，
+// 采样序号从这一路上行音频的第一个算起，跟服务器数的一样），手机用系统自带的 SFSpeechRecognizer（zh-CN，能离线就离线）识别自己录下的这段，
+// 把文字回给服务器（stt 回复）。没授权 / 系统识别不可用 / 出错就回 err，服务器退回百炼。
+struct SttRing {
+    var base = 0                                  // s[0] 是这一路上行音频的第几个采样
+    var s = [Int16]()
+    mutating func reset() { base = 0; s.removeAll(keepingCapacity: true) }
+    mutating func add(_ f: [Int16]) {
+        s.append(contentsOf: f)
+        if s.count > 16000 * 95 { let d = 16000 * 5; s.removeFirst(d); base += d }      // 只留最近约 90 秒，成批丢
+    }
+    func slice(_ a: Int, _ b: Int) -> [Int16]? {
+        let lo = a - base, hi = min(b - base, s.count)
+        guard lo >= 0, hi > lo else { return nil }
+        return Array(s[lo..<hi])
+    }
+}
+
+final class SysSpeech {
+    private final class Job {
+        let pcm: [Int16], ctx: [String], done: (String?, String?, Bool) -> Void
+        var over = false, last = ""
+        var task: SFSpeechRecognitionTask?
+        init(_ p: [Int16], _ c: [String], _ d: @escaping (String?, String?, Bool) -> Void) { pcm = p; ctx = c; done = d }
+    }
+
+    private let q: DispatchQueue                   // 所有状态都在 LinkEngine 的 q 上动
+    private let rec = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+    private let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+    private var waiting = [Job](), cur: Job?
+    init(_ q: DispatchQueue) { self.q = q }
+
+    static var available: Bool { SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) != nil }
+
+    // 开麦的时候顺便让系统弹一次授权，别等到第一句要识别了才弹
+    static func askPermission() {
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in } }
+    }
+
+    /// 在 q 上调，done 也在 q 上回：(文字, 错误, 是不是没授权)。一次只识别一段，后面的排队
+    func run(_ pcm: [Int16], ctx: [String], done: @escaping (String?, String?, Bool) -> Void) {
+        waiting.append(Job(pcm, ctx, done))
+        next()
+    }
+
+    private func next() {
+        guard cur == nil, !waiting.isEmpty else { return }
+        let j = waiting.removeFirst()
+        cur = j
+        begin(j)
+    }
+
+    private func end(_ j: Job, _ text: String?, _ err: String? = nil, deny: Bool = false) {
+        guard !j.over else { return }
+        j.over = true
+        j.task?.cancel()
+        j.done(text, err, deny)
+        cur = nil
+        next()
+    }
+
+    private func begin(_ j: Job) {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: break
+        case .notDetermined:                       // 授权弹窗还在等用户点：点完再办
+            SFSpeechRecognizer.requestAuthorization { [weak self] st in
+                self?.q.async {
+                    if st == .authorized { self?.begin(j) } else { self?.end(j, nil, "没有语音识别权限，到 设置 > 小芽 里打开", deny: true) }
+                }
+            }
+            return
+        default:
+            return end(j, nil, "没有语音识别权限，到 设置 > 小芽 里打开", deny: true)
+        }
+        guard let r = rec, r.isAvailable else { return end(j, nil, "系统语音识别现在不可用") }
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true      // 超时的时候至少有最近一次的中间结果可用
+        req.addsPunctuation = true
+        req.taskHint = .dictation
+        req.contextualStrings = j.ctx              // 「Claude」「小芽」「小智」这类词，服务器随请求给
+        if r.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
+        j.task = r.recognitionTask(with: req) { [weak self] res, err in
+            self?.q.async {
+                guard let self = self, !j.over else { return }
+                if let res = res {
+                    j.last = res.bestTranscription.formattedString
+                    if res.isFinal { return self.end(j, j.last) }
+                }
+                if let err = err as NSError? {
+                    if !j.last.isEmpty { self.end(j, j.last) }
+                    else if err.code == 1110 { self.end(j, "") }          // No speech detected：这段里没有人话
+                    else { self.end(j, nil, "\(err.localizedDescription)（\(err.domain) \(err.code)）") }
+                }
+            }
+        }
+        var i = 0
+        while i < j.pcm.count {                    // 0.5 秒一块喂进去，比实时快
+            let n = min(8000, j.pcm.count - i)
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(n)), let ch = buf.floatChannelData?[0] else { break }
+            buf.frameLength = AVAudioFrameCount(n)
+            for k in 0..<n { ch[k] = Float(j.pcm[i + k]) / 32768 }
+            req.append(buf)
+            i += n
+        }
+        req.endAudio()
+        let dur = Double(j.pcm.count) / 16000
+        q.asyncAfter(deadline: .now() + 8 + dur * 0.4) { [weak self] in                 // 比服务器的等待（10 秒 + 0.5 倍时长）早一点
+            guard let self = self, !j.over else { return }
+            if j.last.isEmpty { self.end(j, nil, "系统语音识别超时") } else { self.end(j, j.last) }
+        }
+    }
+}
+
 final class LinkEngine: NSObject {
     static let shared = LinkEngine()
     let q = DispatchQueue(label: "esplink.link")
@@ -272,8 +388,16 @@ final class LinkEngine: NSObject {
         }
     }
 
+    // hello 里加上 stt:1：这个安装包能用系统语音识别（老安装包、安卓没有这一项，服务器就继续调百炼）
+    private static func withStt(_ h: String) -> String {
+        guard SysSpeech.available, let d = h.data(using: .utf8), var m = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return h }
+        m["stt"] = 1
+        guard let o = try? JSONSerialization.data(withJSONObject: m), let s = String(data: o, encoding: .utf8) else { return h }
+        return s
+    }
+
     func start(_ sv: [String], _ tok: String, _ hel: String) {
-        servers = sv; token = tok; hello = hel
+        servers = sv; token = tok; hello = LinkEngine.withStt(hel)
         want = true
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
@@ -361,13 +485,14 @@ final class LinkEngine: NSObject {
             if (m["login"] as? Int ?? 0) == 0 {
                 up = true
                 emit?("conn", ["on": true, "host": host, "why": ""])
-                if liveOn { liveEnc.reset(); send("{\"t\":\"rec\",\"wc\":15}") }   // 断线重连：小芽接着听
+                if liveOn { liveEnc.reset(); sttLive.reset(); send("{\"t\":\"rec\",\"wc\":15}") }   // 断线重连：小芽接着听
             }
         case "auth": want = false
         case "ka", "pong", "sp_mark", "ack", "cfg", "sp_end": return
         case "sp_start": spStart(m["n"] as? Int ?? 0, m["fmt"] as? String ?? ""); return
         case "sp": spData(m["n"] as? Int ?? 0, m["d"] as? String ?? ""); return
         case "snd": beep(m["k"] as? String ?? ""); return
+        case "stt": sttRequest(m); return
         case "rec_stop":
             if liveOn { liveOn = false; soundOff = false; micMaybeIdle(); updateBg(); activityUpdate(); emit?("live", ["on": false, "why": "stop"]) }
         case "note": note(m)
@@ -554,6 +679,25 @@ final class LinkEngine: NSObject {
     private(set) var liveMuted = false
     private var pttOn = false
     private var pttEnc = Adpcm(), liveEnc = Adpcm()
+    private var sttPtt = SttRing(), sttLive = SttRing()          // 送给服务器的上行音频原样留一份，系统识别按服务器说的位置取
+    private lazy var speech = SysSpeech(self.q)
+
+    // 服务器要手机识别自己录下的一段（server.py 的 asr_any）
+    private func sttRequest(_ m: [String: Any]) {
+        let id = m["i"] as? Int ?? 0
+        func reply(_ o: [String: Any]) {
+            if let d = try? JSONSerialization.data(withJSONObject: o), let s = String(data: d, encoding: .utf8) { send(s) }
+        }
+        let ring = (m["s"] as? String) == "live" ? sttLive : sttPtt
+        guard let pcm = ring.slice(m["a"] as? Int ?? 0, m["b"] as? Int ?? 0) else {
+            return reply(["t": "stt", "i": id, "err": "这段录音已经不在手机上了"])
+        }
+        speech.run(pcm, ctx: m["ctx"] as? [String] ?? []) { text, err, deny in
+            var o: [String: Any] = ["t": "stt", "i": id]
+            if let text = text { o["text"] = text } else { o["err"] = err ?? "识别失败"; if deny { o["deny"] = true } }
+            reply(o)
+        }
+    }
     private var ring = [[Int16]]()
     private var acc: Float = 0, accN = 0, pos: Double = 0
     private var frame = [Int16]()
@@ -563,9 +707,9 @@ final class LinkEngine: NSObject {
     static func micPermission(_ done: @escaping (Bool) -> Void) {
         let s = AVAudioSession.sharedInstance()
         switch s.recordPermission {
-        case .granted: done(true)
+        case .granted: SysSpeech.askPermission(); done(true)
         case .denied: done(false)
-        default: s.requestRecordPermission { ok in done(ok) }
+        default: s.requestRecordPermission { ok in if ok { SysSpeech.askPermission() }; done(ok) }
         }
     }
 
@@ -636,9 +780,9 @@ final class LinkEngine: NSObject {
             let db = 20 * log10(sqrt(s / 320) / 32768 + 1e-6)
             let v = max(0, min(1, (db + 58) / 46))
             if pttOn {
-                pttEnc.feed(fr); sendAu(&pttEnc, all: false)
+                pttEnc.feed(fr); sttPtt.add(fr); sendAu(&pttEnc, all: false)
             } else if liveOn {
-                if !liveMuted { liveEnc.feed(fr); sendAu(&liveEnc, all: false) }
+                if !liveMuted { liveEnc.feed(fr); sttLive.add(fr); sendAu(&liveEnc, all: false) }
             } else {
                 ring.append(fr)
                 if ring.count > 25 { ring.removeFirst() }
@@ -656,10 +800,10 @@ final class LinkEngine: NSObject {
 
     func pttStart(_ msg: String) -> String? {
         if let err = openMic() { return err }
-        pttEnc.reset()
+        pttEnc.reset(); sttPtt.reset()
         if !send(msg) { return "还没连上服务器" }
         pttOn = true
-        for p in ring { pttEnc.feed(p) }
+        for p in ring { pttEnc.feed(p); sttPtt.add(p) }
         ring.removeAll()
         sendAu(&pttEnc, all: false)
         beep("start")
@@ -682,7 +826,7 @@ final class LinkEngine: NSObject {
         echoSafe = echoOk()
         liveOn = true
         q.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.recheckEcho() }     // 回声消除是开麦后才生效的，等一下再看一次
-        liveEnc.reset()
+        liveEnc.reset(); sttLive.reset()
         send("{\"t\":\"rec\",\"wc\":15}")
         beep("start")
         updateBg()

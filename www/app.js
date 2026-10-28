@@ -18,6 +18,15 @@
 const $ = s => document.querySelector(s);
 let cfg = { token: "", user: "", servers: [] };
 try { cfg = Object.assign(cfg, window.ESP_CONFIG || {}, JSON.parse(localStorage.getItem("cfg") || "{}")); } catch (e) { cfg = Object.assign(cfg, window.ESP_CONFIG || {}); }
+// 2026-10-28 用户定：App 只连硅谷直连，不再经百度云北京中转（那一段出口只有 1Mbps，开 PDF / 大文件很慢）。老安装里存着的线路表去掉北京那条，只清这一次，
+// 以后在设置里自己手填回去不会再被清。北京那台机器上的中转还留着给设备（ESP32）用，要走它就在设置的服务器地址里加 192.0.2.1:8003
+try {
+  if (!localStorage.getItem("bj_off")) {
+    localStorage.setItem("bj_off", "1");
+    const keep = (cfg.servers || []).filter(h => !String(h).startsWith("192.0.2.1"));
+    if (keep.length && keep.length !== cfg.servers.length) { cfg.servers = keep; localStorage.setItem("cfg", JSON.stringify({ servers: cfg.servers, token: cfg.token, user: cfg.user })); }
+  }
+} catch (e) { /* 没有存储 */ }
 const CAP = window.Capacitor;
 const PLATFORM = (CAP && CAP.getPlatform && CAP.getPlatform()) || "web";
 const DEV_ID = (() => {                              // 每台手机一个设备号：服务器按它把朗读、提示只回给这台
@@ -28,7 +37,7 @@ const DEV_ID = (() => {                              // 每台手机一个设备
 })();
 const DEV_LABEL = PLATFORM === "ios" ? "iPhone" : PLATFORM === "android" ? "安卓" : "浏览器";
 function saveCfg() { try { localStorage.setItem("cfg", JSON.stringify({ servers: cfg.servers, token: cfg.token, user: cfg.user })); } catch (e) { /* 没有存储 */ } }
-const HOSTS = {};
+const HOSTS = {};       // 线路名对照（手填了别的地址就显示地址本身）
 const EASE = "cubic-bezier(.32,.72,0,1)";
 function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } return null; }
 
@@ -94,6 +103,8 @@ const ICONS = {
   menu: '<path d="M4.5 7h15M4.5 12h15M4.5 17h9"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   book: '<path d="M5 4.5h9.5a3 3 0 0 1 3 3V19.5H8a3 3 0 0 1-3-3z"/><path d="M5 16.5a3 3 0 0 1 3-3h9.5M9 8h5"/>',
+  star: '<path d="M12 4.3l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
+  starOn: '<path d="M12 4.3l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   repeat: '<path d="M17 4.5l2.5 2.5L17 9.5"/><path d="M19.5 7H8a3.5 3.5 0 0 0-3.5 3.5v1M7 19.5L4.5 17 7 14.5"/><path d="M4.5 17H16a3.5 3.5 0 0 0 3.5-3.5v-1"/>',
   power: '<path d="M12 3.5v8"/><path d="M7.2 6.6a7.5 7.5 0 1 0 9.6 0"/>',
   plug: '<path d="M12 22v-5"/><path d="M9 7.5V2.5"/><path d="M15 7.5V2.5"/><path d="M18 9.5v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4v-4z"/>',
@@ -101,8 +112,9 @@ const ICONS = {
   minus: '<path d="M5.5 12h13"/>',
   vtop: '<path d="M6.5 5h11M12 19.5V9M7.5 13.5L12 9l4.5 4.5"/>',
   vbot: '<path d="M6.5 19h11M12 4.5V15M7.5 10.5l4.5 4.5 4.5-4.5"/>',
+  expand: '<path d="M4.5 9V6.5a2 2 0 0 1 2-2H9M15 4.5h2.5a2 2 0 0 1 2 2V9M19.5 15v2.5a2 2 0 0 1-2 2H15M9 19.5H6.5a2 2 0 0 1-2-2V15"/>',
 };
-const FILLED = new Set(["play", "stop", "hang"]);
+const FILLED = new Set(["play", "stop", "hang", "starOn"]);
 function ico(n) { return `<svg class="ic${FILLED.has(n) ? " fill" : ""}" viewBox="0 0 24 24">${ICONS[n] || ICONS.spark}</svg>`; }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 function el(html) { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstChild; }
@@ -289,7 +301,7 @@ function connect() {
     clearTimeout(giveUp);
     if (ws !== w) return;
     ws = null;
-    if (!heard) srv++;               // 连上了却一个字没回 / 连不上：换下一个地址（先北京中转再直连硅谷）
+    if (!heard) srv++;               // 连上了却一个字没回 / 连不上：换下一个地址（设置里只填了一个就原地重连）
     onDown();
     if (document.visibilityState === "visible" && cfg.token) setTimeout(connect, heard ? 500 : 1500);
   };
@@ -461,6 +473,23 @@ setInterval(() => {
 }, 500);
 setInterval(avBoot, 4000);                             // 小水母大小表：没拉到就定时再试（function 在后面定义）
 
+// ---------------------------------------------------------------- 报错兜底（2026-10-28）：没被捕获的错误 / Promise 拒绝以前静悄悄消失，手机上出了事没处查
+// 记在 localStorage（最近 30 条，同一条连着出现只加次数），连着服务器时报一份（op cerr → 服务日志「App 报错」）；每分钟最多报 5 条，报不上去就算了，不弹框。
+let errT0 = 0, errN = 0;
+function errNote(k, m, w) {
+  m = String(m || "").slice(0, 300);
+  if (/ResizeObserver loop/.test(m)) return;                // 浏览器的无害提示
+  try {
+    const L = JSON.parse(localStorage.getItem("err_log") || "[]"), last = L[L.length - 1];
+    if (last && last.m === m && last.w === w) last.n++; else L.push({ t: Date.now(), k, m, w, v: window.UI_VER || "", n: 1 });
+    localStorage.setItem("err_log", JSON.stringify(L.slice(-30)));
+  } catch (e) { /* 没有存储 */ }
+  if (Date.now() - errT0 > 60000) { errT0 = Date.now(); errN = 0; }
+  if (online && errN++ < 5) q("cerr", { k, m, w, v: window.UI_VER || "" }).catch(() => {});
+}
+addEventListener("error", e => errNote("error", e.message, `${String(e.filename || "").split("/").pop()}:${e.lineno}`));
+addEventListener("unhandledrejection", e => { const r = e.reason; errNote("promise", r && r.message || r, r && r.stack ? String(r.stack).split("\n")[0].slice(0, 80) : ""); });   // WebKit 的 stack 里没有 message，所以内容取 message、位置取 stack 第一行
+
 // ---------------------------------------------------------------- 出错提示：就地一行字，不弹框（2026-10-16 用户：除了小芽通话的悬浮球，App 里的弹窗都不要）
 // 成功了不提示（界面自己会变）。出错时：开着弹层写在弹层标题下面（near 给了就写在它后面），小芽通话全屏时写在通话状态行，
 // 否则写在底栏（输入栏）上面一行；几秒后自己消失
@@ -548,7 +577,7 @@ function popPage() {
   closeSheet(); closePop();
   settle();
   const old = stack.pop(), pg = curPage();
-  if (old.pdf) old.pdf.destroy().catch(() => {});
+  if (old.pdf || old.pv) fvFree(old);
   if (old.def.onLeave) old.def.onLeave(old);
   pg.el.classList.remove("off");
   chrome(pg);
@@ -1450,14 +1479,16 @@ PAGES.plug = {
 
 // ---------------------------------------------------------------- 文件页（2026-10-26）：看硅谷服务器整盘的文件，只读
 // 后端是开源的 dufs，服务器 /app/fs 带令牌转发（只放行 GET / HEAD，/proc /sys /dev 不让进）。列表、内容、下载都是 HTTP 直接取，不走 WebSocket；
-// 线路跟别的页一样看 host()（北京中转优先；以后撤了北京只改 cfg.servers）。出错一律就地一行字，不弹框。
+// 线路跟别的页一样看 host()（2026-10-28 起只有硅谷直连一条）。出错一律就地一行字，不弹框。
 // 目录大小：dufs 给的目录 size 是条目数；字节数另走 /app/fsdu（du 一次量出这一层所有项，根目录第一次约半分钟，服务器缓存 5 分钟）。
 // 预览：文本 / Markdown / 图片；PDF、压缩包、Office、音视频、二进制不预览，交给系统（window.open，跟聊天里的文件一样）。
 const FS_START = "/root", FS_TEXT_MAX = 256 << 10, FS_IMG_MAX = 20 << 20, FS_LIST_MAX = 2000;
 const FS_IMG = new Set("jpg jpeg png gif webp bmp svg ico avif heic heif".split(" "));
 const FS_AUD = new Set("mp3 m4a aac wav flac ogg oga opus weba".split(" "));
 const FS_VID = new Set("mp4 m4v mov webm mkv avi flv wmv 3gp".split(" "));
-const FS_DOC = new Set("doc docx dot dotx ppt pptx pot potx odt odp rtf wps dps".split(" "));     // 服务器上 LibreOffice 转成 PDF 再看
+const FS_DOCX = new Set("docx docm dotx dotm".split(" "));                                         // Word：手机上直接排版（docx-preview）
+const FS_PPTX = new Set("pptx pptm potx potm ppsx ppsm".split(" "));                               // PPT：手机上直接渲染（pptx-renderer）
+const FS_DOC = new Set("doc dot ppt pot pps odt odp rtf wps dps".split(" "));                       // 老格式 / 少见格式：服务器上 LibreOffice 转成 PDF 再看（直接渲染失败的 docx / pptx 也退到这）
 const FS_SHEET = new Set("xlsx xlsm xlsb xls ods et csv tsv".split(" "));                          // 表格
 const FS_ZIP = new Set("zip jar apk ipa".split(" "));                                              // 只列目录
 const FS_TEXT = new Set(("txt log md markdown json jsonl ndjson js mjs cjs ts tsx jsx py sh bash zsh yml yaml toml ini conf cfg env css scss xml sql " +
@@ -1471,6 +1502,8 @@ const HL_LANG = { py: "python", js: "javascript", mjs: "javascript", cjs: "javas
   xml: "xml", svg: "xml", plist: "xml", html: "xml", htm: "xml", sql: "sql", java: "java", c: "c", h: "c", cc: "cpp", cpp: "cpp", hpp: "cpp", go: "go", rs: "rust",
   swift: "swift", kt: "kotlin", kts: "kotlin", rb: "ruby", php: "php", lua: "lua", r: "r", pl: "perl", diff: "diff", patch: "diff" };
 let fsSort = "name";                                     // name | size | time
+let fsFav = (() => { try { const a = JSON.parse(store("fs_fav") || "[]"); return Array.isArray(a) ? a.filter(x => typeof x === "string") : []; } catch (e) { return []; } })();   // 常用文件夹（只存手机本地，和浏览器书签一样）
+const fsFavSave = () => store("fs_fav", JSON.stringify(fsFav));
 const fsPath = pg => pg.p.path || (pg.p.path = FS_START);
 const fsName = p => p === "/" ? "/" : p.slice(p.lastIndexOf("/") + 1);
 const fsDir = p => p.slice(0, p.lastIndexOf("/")) || "/";
@@ -1485,7 +1518,7 @@ const fsExt = n => n.includes(".") ? n.slice(n.lastIndexOf(".") + 1).toLowerCase
 function fsKind(name) {
   const e = fsExt(name);
   return FS_IMG.has(e) ? "image" : e === "pdf" ? "pdf" : e === "md" || e === "markdown" ? "md" : e === "json" ? "json" : e === "html" || e === "htm" || e === "xhtml" ? "html"
-    : FS_AUD.has(e) ? "audio" : FS_VID.has(e) ? "video" : FS_DOC.has(e) ? "office" : FS_SHEET.has(e) ? "sheet" : FS_ZIP.has(e) ? "zip"
+    : FS_AUD.has(e) ? "audio" : FS_VID.has(e) ? "video" : FS_DOCX.has(e) ? "docx" : FS_PPTX.has(e) ? "pptx" : FS_DOC.has(e) ? "office" : FS_SHEET.has(e) ? "sheet" : FS_ZIP.has(e) ? "zip"
     : FS_BIN.has(e) ? "bin" : FS_TEXT.has(e) ? "text" : "probe";   // probe：没见过的后缀 / 没后缀，取开头看像不像文字
 }
 // 取一段字节，最多读 cap 就掐断：服务器没按 Range 给、或文件长大了，也不会把整个大文件拉进手机内存
@@ -1538,6 +1571,17 @@ function fsCrumbs(path) {
   const b = (p, t, cur) => `<button class="fs-crumb${cur ? " cur" : ""}"${cur ? "" : ` data-act="fsdir:${esc(p)}"`}>${esc(t)}</button>`;
   return `<div class="fs-crumbs">${b("/", "/", !last)}${segs.map((s, i) => b(acc += "/" + s, s, i === last - 1)).join("")}</div>`;
 }
+function fsFavBar(path) {                                // 当前文件夹：设为 / 取消常用；常用清单（点开挑一个跳过去）
+  const on = fsFav.includes(path);
+  return `<div class="fs-bar"><button class="fs-chip${on ? " on" : ""}" data-act="fsfavtog">${ico(on ? "starOn" : "star")}${on ? "已是常用文件夹" : "设为常用文件夹"}</button>` +
+    `<button class="fs-chip" data-act="fsfavlist">${ico("folder")}常用文件夹${fsFav.length ? " " + fsFav.length : ""}</button></div>`;
+}
+function fsFavSheet() {
+  const here = curPage() && curPage().key === "files" ? fsPath(curPage()) : "";
+  openSheet("fsfav", `<div class="sh-head"><b>常用文件夹</b><span>点一下跳过去；右边 ✕ 移出常用</span></div>` + (fsFav.length ? `<div class="group">${fsFav.map((p, i) =>
+    `<div class="row"><button class="r-main" style="text-align:left" data-act="fsfavgo:${esc(p)}"><span class="r-t">${esc(fsName(p))}${p === here ? "（当前）" : ""}</span><span class="r-s">${esc(p)}</span></button><button class="chip" data-act="fsfavdel:${i}">${ico("x")}</button></div>`).join("")}</div>`
+    : '<div class="fs-note">还没有常用文件夹：进到某个文件夹，点上面的「设为常用文件夹」。</div>'));
+}
 function fsRow(pg, dir, it) {
   const du = pg.du && pg.du.items, p = fsJoin(dir, it.name), k = it.dir ? "folder" : fsKind(it.name) === "image" ? "image" : "file";
   const meta = (it.dir ? (du && it.name in du ? `<b>${fsize(du[it.name])}</b> · ` : "") + (it.size >= 1000 ? "1000+" : it.size) + " 项" : fsize(it.size)) + " · " + fsTime(it.mtime);
@@ -1571,7 +1615,7 @@ PAGES.files = {
     const sub = pg.du === "busy" ? "正在量各项占了多少盘…" : bad ? pg.du.err : `${d.items.length} 项` + (pg.du && pg.du.items ? ` · 合计 ${fsize(pg.du.total)}` : "");
     const chip = (k, t) => `<button class="fs-chip${fsSort === k ? " on" : ""}" data-act="fssort:${k}">${t}${k === "size" && pg.du === "busy" ? '<span class="spin"></span>' : ""}</button>`;
     return `<header class="hero"><div class="over">硅谷服务器</div><h1>${esc(fsName(path))}</h1><div class="sub${bad ? " bad" : ""}">${esc(sub)}</div></header>` +
-      fsCrumbs(path) + `<div class="fs-bar">${chip("name", "名称")}${chip("size", "大小")}${chip("time", "时间")}</div>` +
+      fsCrumbs(path) + fsFavBar(path) + `<div class="fs-bar">${chip("name", "名称")}${chip("size", "大小")}${chip("time", "时间")}</div>` +
       (L.length ? `<div class="group">${L.slice(0, FS_LIST_MAX).map(it => fsRow(pg, path, it)).join("")}</div>` +
         (L.length > FS_LIST_MAX ? `<div class="fs-note">还有 ${L.length - FS_LIST_MAX} 项没列出</div>` : "") : emptyHtml("folder", "空目录", ""));
   },
@@ -1588,6 +1632,7 @@ const LIBS = {
   katex: { css: ["katex/katex.min.css"], js: ["katex/katex.min.js", "katex/auto-render.min.js"] },
   mermaid: { js: ["mermaid/mermaid.min.js"] },
   jszip: { js: ["jszip/jszip.min.js"] },
+  docx: { js: ["docx/docx-preview.min.js"] },          // 要先有 jszip
 };
 const libUrl = f => `http://${host()}/app/lib/${f}`;
 const libP = {};
@@ -1707,6 +1752,72 @@ async function fvPdfPage(pg, i, host_, cssW) {
     await page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise;
   } catch (e) { /* 这一页画不出来：留白 */ }
 }
+// Word（.docx）：docx-preview（Apache-2.0）在手机上直接排成一页一页，不让服务器转 PDF（又慢又占磁盘）。页宽是文档自己的（A4≈794px），整体用 CSS zoom 缩到屏宽，
+// 放大缩小 = 乘一个系数、横向可滑。先渲染进一个游离节点再挂上去，这样标题下能先写「共 N 页」。
+// PPT（.pptx）：@aiden0z/pptx-renderer（Apache-2.0，ES 模块，自带 JSZip / ECharts）：fitMode contain = 自己缩到屏宽，windowed = 只挂看得到的几页，大 PPT 不爆内存；setZoom 放大缩小。
+// 两种都是「库在手机上跑」：渲染本身出错（文件特殊 / 库不认）才退回服务器 LibreOffice 转 PDF（fvNativeFail），读文件时的网络 / 大小错误照实报。
+let pptxMod = null;
+function pptxLib() {                                          // 它是 ES 模块：读成文本再用 blob 网址 import，跟 PDF Worker 一样绕开跨域、缓存都交给 fetch
+  return pptxMod || (pptxMod = (async () => {
+    const r = await fetch(libUrl("pptx/pptx-renderer.js"));
+    if (!r.ok) throw new Error("加载组件失败（pptx-renderer.js），检查一下网络");
+    return import(URL.createObjectURL(new Blob([await r.text()], { type: "text/javascript" })));
+  })().catch(e => { pptxMod = null; throw e; }));
+}
+function fvNativeFail(pg, e) {
+  const d = pg.d;
+  if (d.kind === "docx" || d.kind === "pptx") { d.kind = "office"; return fvPdfLoad(pg, fvConv(pg.p), true); }
+  d.busy = false; d.err = (e && e.message) || "打不开这个文件"; draw(pg);
+}
+async function fvDocxLoad(pg) {
+  const d = pg.d;
+  d.busy = true; d.err = ""; d.note = "正在读取…"; draw(pg);
+  let bytes;
+  try { bytes = await fvBytes(fvSrc(pg.p), 80 << 20, 90000); await loadLib("jszip"); await loadLib("docx"); }
+  catch (e) { d.busy = false; d.err = e.message || "打不开这个文件"; return draw(pg); }
+  try {
+    const node = document.createElement("div");
+    await docx.renderAsync(bytes, node, null, { className: "docx", inWrapper: true, breakPages: true, ignoreLastRenderedPageBreak: true, useBase64URL: true });
+    if (!node.querySelector("section.docx")) throw new Error("没排出内容");
+    pg.dxNode = node; d.pages = node.querySelectorAll("section.docx").length;
+  } catch (e) { return fvNativeFail(pg, e); }
+  d.busy = false; draw(pg); fvDocxMount(pg);
+}
+function fvDocxMount(pg) {
+  const box = pg.el.querySelector(".dx-doc");
+  if (!box || !pg.dxNode) return;
+  box.appendChild(pg.dxNode);
+  fvDocxFit(pg);
+  if (!pg.ro && window.ResizeObserver) { pg.ro = new ResizeObserver(() => fvDocxFit(pg)); pg.ro.observe(pg.el); }
+}
+function fvDocxFit(pg) {
+  const box = pg.el.querySelector(".dx-doc"), wrap = box && box.parentNode;
+  if (!box || !wrap || !wrap.clientWidth) return;
+  box.style.zoom = 1;
+  const pw = Math.max(1, ...[...box.querySelectorAll("section.docx")].map(x => x.offsetWidth));
+  box.style.zoom = String(wrap.clientWidth / pw * pg.d.zoom);
+}
+async function fvPptxLoad(pg) {
+  const d = pg.d;
+  d.busy = true; d.err = ""; d.note = "正在读取…"; draw(pg);
+  let bytes, m;
+  try { bytes = await fvBytes(fvSrc(pg.p), 100 << 20, 120000); m = await pptxLib(); }
+  catch (e) { d.busy = false; d.err = e.message || "打不开这个文件"; return draw(pg); }
+  d.busy = false; draw(pg);
+  try {
+    pg.pv = await m.PptxViewer.open(bytes, pg.el.querySelector(".pp-doc"), { zipLimits: m.RECOMMENDED_ZIP_LIMITS, lazySlides: true, lazyMedia: true, fitMode: "contain", pdfjs: false,
+      scrollContainer: pg.el, listOptions: { windowed: true, initialSlides: 4, batchSize: 4 } });
+    if (!pg.pv.slideCount) throw new Error("没有幻灯片");
+    d.pages = pg.pv.slideCount;
+    const sub = pg.el.querySelector(".hero .sub");
+    if (sub) sub.textContent = fvSubText(pg);
+  } catch (e) { fvFree(pg); fvNativeFail(pg, e); }
+}
+function fvFree(pg) {                                       // 离开 / 重载时放掉 PDF、PPT 查看器占的内存
+  if (pg.pdf) { pg.pdf.destroy().catch(() => {}); pg.pdf = null; }
+  if (pg.pv) { try { pg.pv.destroy(); } catch (e) { /* 已经销毁 */ } pg.pv = null; }
+  pg.dxNode = null;
+}
 // 表格：xlsx / xls / ods 用 SheetJS，csv / tsv 自己解析（省一个组件、UTF-8 / GBK 都认）；最多显示 1000 行 × 40 列
 function dsvParse(t, sep, limit) {
   const rows = []; let row = [], f = "", q = false;
@@ -1763,11 +1874,12 @@ function fvFit(pg) {                                       // HTML 预览按电�
   sysFit(pg);
   if (!pg.ro && window.ResizeObserver) { pg.ro = new ResizeObserver(() => sysFit(pg)); pg.ro.observe(pg.el); }
 }
+const fvSubText = pg => [pg.p.size ? fsize(pg.p.size) : "", pg.p.mtime ? fsTime(pg.p.mtime) : "", pg.d && pg.d.pages ? pg.d.pages + (pg.d.kind === "pptx" ? " 张" : " 页") : ""].filter(Boolean).join(" · ");
 PAGES.fileView = {
   ctx: "fs", bar: "acts", title: pg => fvName(pg.p),
   acts: pg => {
     const d = pg.d || {}, a = [];
-    if (d.kind === "pdf" || d.kind === "office") a.push({ label: "", icon: "minus", cls: "mini", act: "fvzoom:-" }, { label: "", icon: "plus", cls: "mini", act: "fvzoom:+" });
+    if (d.kind === "pdf" || d.kind === "office" || d.kind === "docx" || d.kind === "pptx") a.push({ label: "", icon: "minus", cls: "mini", act: "fvzoom:-" }, { label: "", icon: "plus", cls: "mini", act: "fvzoom:+" });
     if (d.kind === "html") a.push(d.mode === "src" ? { label: "预览", icon: "globe", act: "fvmode" } : { label: "源码", icon: "term", act: "fvmode" });
     if (d.big) a.push(d.tail ? { label: "看开头", icon: "vtop", act: "fshead" } : { label: "看结尾", icon: "vbot", act: "fstail" });
     if (pg.p.path) a.push({ label: "所在文件夹", icon: "folder", act: "fsparent" });
@@ -1776,12 +1888,14 @@ PAGES.fileView = {
   },
   load(pg) {
     pg.stick = false;
-    if (pg.pdf) { pg.pdf.destroy().catch(() => {}); pg.pdf = null; }
+    fvFree(pg);
     const kind = fsKind(fvName(pg.p));
     pg.d = { kind, text: null, big: false, tail: false, err: "", busy: false, note: "", mode: "view", zoom: 1 };
     if (kind === "html") { draw(pg); fvFit(pg); return; }
     if (kind === "image" || kind === "audio" || kind === "video" || kind === "bin") { draw(pg); return; }
     if (kind === "pdf") return fvPdfLoad(pg, fvSrc(pg.p), false);
+    if (kind === "docx") return fvDocxLoad(pg);
+    if (kind === "pptx") return fvPptxLoad(pg);
     if (kind === "office") return fvPdfLoad(pg, fvConv(pg.p), true);
     if (kind === "sheet") return fvSheetLoad(pg);
     if (kind === "zip") return fvZipLoad(pg);
@@ -1790,7 +1904,7 @@ PAGES.fileView = {
   html(pg) {
     const d = pg.d, p = pg.p, name = fvName(p), src = fvSrc(p);
     const head = `<header class="hero"><div class="over">${esc(p.path ? fsDir(p.path) : "对话里的文件")}</div><h1>${esc(name)}</h1>` +
-      `<div class="sub">${esc([p.size ? fsize(p.size) : "", p.mtime ? fsTime(p.mtime) : "", d && d.pages ? d.pages + " 页" : ""].filter(Boolean).join(" · "))}</div></header>`;
+      `<div class="sub">${esc(fvSubText(pg))}</div></header>`;
     if (!d) return head + LOADING;
     if (d.kind === "html" && d.mode !== "src")
       return `<div class="sys-wait">${LOADING}</div><div class="sys-box fv"><iframe class="sys-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" src="${esc(src)}" onload="this.classList.add('on')"></iframe>` +
@@ -1802,6 +1916,8 @@ PAGES.fileView = {
       case "audio": return head + `<audio class="fv-media" controls preload="metadata" src="${esc(src)}" onerror="this.insertAdjacentHTML('afterend','<div class=fs-note>这个音频格式手机放不了，点下面的「下载 / 打开」。</div>')"></audio>`;
       case "video": return head + `<video class="fv-media" controls playsinline preload="metadata" src="${esc(src)}" onerror="this.insertAdjacentHTML('afterend','<div class=fs-note>这个视频格式手机放不了，点下面的「下载 / 打开」。</div>')"></video>`;
       case "pdf": case "office": return head + '<div class="pdf-doc"></div>';
+      case "docx": return head + '<div class="dx-wrap"><div class="dx-doc"></div></div>';
+      case "pptx": return head + '<div class="pp-doc"></div>';
       case "sheet": return head + fvSheetHtml(pg);
       case "zip": return head + `<div class="fs-note">压缩包，共 ${d.entries.length} 项（只列目录，不解压）。</div><div class="group">` +
         d.entries.slice(0, 500).map(x => `<div class="row fs-row"><span class="r-ic">${ico(x.dir ? "folder" : "file")}</span><span class="r-main"><span class="r-t">${esc(x.n)}</span>${x.dir ? "" : `<span class="r-s">${fsize(x.size)}</span>`}</span></div>`).join("") +
@@ -2134,6 +2250,18 @@ const ACT = {
   plugtog: () => { const pg = curPage(); if (pg && pg.data) plugRun(pg, pg.data.pwr ? "off" : "on"); },
   plugre: () => { const pg = curPage(); if (pg) plugRun(pg, "state"); },
   fsdir: p => go("files", { path: p }),
+  fsfavtog: () => {
+    const pg = curPage(), p = pg && fsPath(pg), i = fsFav.indexOf(p);
+    if (i >= 0) fsFav.splice(i, 1); else fsFav.push(p);
+    fsFavSave(); draw(pg);
+  },
+  fsfavlist: () => fsFavSheet(),
+  fsfavgo: p => { closeSheet(); go("files", { path: p }); },
+  fsfavdel: i => {
+    fsFav.splice(+i, 1); fsFavSave(); fsFavSheet();
+    const pg = curPage();
+    if (pg && pg.key === "files") draw(pg);
+  },
   fsfile: p => {
     const pg = curPage(), n = fsName(p), it = pg && pg.data && pg.data.items && pg.data.items.find(x => x.name === n);
     if (it) go("fileView", { path: p, size: it.size, mtime: it.mtime });
@@ -2148,9 +2276,9 @@ const ACT = {
   fsparent: () => { const pg = curPage(); if (pg && pg.p.path) go("files", { path: fsDir(pg.p.path) }); },     // 所在文件夹
   fvzoom: dir => {
     const pg = curPage(), Z = [1, 1.5, 2, 3];
-    if (!pg || !pg.pdf) return;
+    if (!pg || !pg.d || !(pg.pdf || pg.pv || pg.dxNode)) return;
     pg.d.zoom = Z[Math.max(0, Math.min(Z.length - 1, Z.indexOf(pg.d.zoom) + (dir === "+" ? 1 : -1)))];
-    fvPdfMount(pg);
+    if (pg.pdf) fvPdfMount(pg); else if (pg.pv) pg.pv.setZoom(pg.d.zoom * 100); else fvDocxFit(pg);
   },
   fvmode: () => {                                      // HTML 文件：预览 ⇄ 源码
     const pg = curPage();
@@ -2179,9 +2307,21 @@ const BR_MAX = 8, BR_LIVE = 3;                       // 最多 8 个标签；同
 const BR_ENGINES = { baidu: ["百度", "https://www.baidu.com/s?wd="], bing: ["必应", "https://www.bing.com/search?q="], google: ["谷歌", "https://www.google.com/search?q="] };
 const BR_UA = PLATFORM === "ios" ? "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
   : "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+// 医患通后台借登录：把保活脚本一直在续的那份登录（服务器给的 token）写进该站点自己的 localStorage.authority，再跳到目标页。
+// 只在点入口后 30 秒内、只认该站点的源、已经是这个值就什么都不做（不会覆盖用户之后自己登录的）
+const brInjJs = j => "(function(){try{var o=" + JSON.stringify(j.o) + ",t=" + JSON.stringify(j.tok) + ";if(location.origin!==o||localStorage.getItem('authority')===t)return;localStorage.setItem('authority',t);location.replace(" + JSON.stringify(j.to) + ")}catch(e){}})();";
 const BR_META_JS = "try{window.mobileApp.postMessage({detail:{m:'meta',t:document.title,u:location.href}})}catch(e){}";
 const BR_DESK_JS = "(function(){var m=document.querySelector('meta[name=viewport]');if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);}m.content='width=1280';})();";
-const BR = { tabs: [], cur: 0, seq: 0, mode: "", ready: false, broken: false, fails: 0, prog: 0, sys: null, clearArm: false };
+// 手机浏览器内核没有「整页全屏」（iPhone 上 documentElement.requestFullscreen 根本不存在）：页面点「全屏」什么都不会发生。
+// 页面加载完塞一个垫片：requestFullscreen / exitFullscreen 只改状态、告诉网页层（messageFromWebview m:'fs'），网页层藏起地址栏和底栏让原生网页撑满。新文档装上时会报一次 off（跳转后自动退出全屏）。
+const BR_FS_JS = "(function(){if(window.__brfs)return;window.__brfs=1;var d=document,de=d.documentElement,on=false;" +
+  "function set(v){if(on!==v){on=v;try{window.mobileApp.postMessage({detail:{m:'fs',on:v}})}catch(e){}try{d.dispatchEvent(new Event('fullscreenchange'))}catch(e){}}return Promise.resolve()}" +
+  "var rq=function(){return set(true)},ex=function(){return set(false)};" +
+  "de.requestFullscreen=de.webkitRequestFullscreen=rq;if(d.body)d.body.requestFullscreen=d.body.webkitRequestFullscreen=rq;d.exitFullscreen=d.webkitExitFullscreen=ex;" +
+  "function g(k,f){try{Object.defineProperty(d,k,{get:f,configurable:true})}catch(e){}}" +
+  "g('fullscreenElement',function(){return on?de:null});g('webkitFullscreenElement',function(){return on?de:null});g('fullscreenEnabled',function(){return true});" +
+  "try{window.mobileApp.postMessage({detail:{m:'fs',on:false}})}catch(e){}})();";
+const BR = { tabs: [], cur: 0, seq: 0, full: 0, fullOwn: false, mode: "", ready: false, broken: false, fails: 0, prog: 0, sys: null, clearArm: false };
 const brJson = (k, d) => { try { return JSON.parse(store(k) || "null") || d; } catch (e) { return d; } };
 let brBm = brJson("br_bm", []), brHist = brJson("br_hist", []), brSet = Object.assign({ engine: "baidu" }, brJson("br_set", {}));
 const brNewTab = (url, desk) => ({ k: ++BR.seq, url: url || "", title: "", desk: !!desk, wid: null, vis: false, shot: "", load: false, err: false, used: Date.now(), dim: "" });
@@ -2219,6 +2359,8 @@ async function sysMapUrl(u) {
   return mount ? sysUrl({ mount, path: u.pathname + u.search + u.hash }) : "";
 }
 const brIsSys = url => url.startsWith(`http://${host()}/app/s/`);
+const brIsDemo = url => /^http:\/\/[^/]+\/app\/s\/[^/]+\/ops\/demo(\/|$|\?|#)/.test(url);
+const brFixed = t => !!t && t.desk && brIsDemo(t.url || "");       // 只有演示页：它按窗口比例放宽舞台，竖屏拿到又高又窄的窗口会挤成一条，所以竖屏固定 16:10；别的页面（汇报 / BI / 后台）照常占满
 async function brResolve(input) {                    // 输入 → 真正要加载的网址（本机端口换成反代）；办不了返回 ""
   let url = brNormalize(input);
   try {
@@ -2232,7 +2374,7 @@ async function brResolve(input) {                    // 输入 → 真正要加�
   return url;
 }
 // 对外入口：聊天里的外链、系统页「用浏览器打开」都走这里。没有浏览器模块就交系统浏览器
-async function brOpen(url, newTab) {
+async function brOpen(url, newTab, inj) {
   if (!IAB || BR.broken) { window.open(url, "_blank"); return; }
   brEnsure();
   url = await brResolve(url);
@@ -2242,12 +2384,27 @@ async function brOpen(url, newTab) {
     if (BR.tabs.length >= BR_MAX) hint("标签页满了（最多 " + BR_MAX + " 个），在当前标签里打开");
     else { t = brNewTab(); BR.tabs.push(t); BR.cur = BR.tabs.length - 1; }
   }
-  t.url = url; t.title = ""; t.err = false; t.used = Date.now(); t.desk = brIsSys(url);
-  BR.mode = "";
+  t.url = url; t.title = ""; t.err = false; t.used = Date.now(); t.desk = brIsSys(url) || !!inj;
+  t.inj = inj ? Object.assign({ until: Date.now() + 30000 }, inj) : null;
+  BR.mode = ""; brFullOff();
   brSave();
   const pg = curPage();
   if (pg && pg.key === "browser") { draw(pg); brSync(); } else go("browser");
 }
+function brFull(t, on, fromPage) {                  // 全屏 / 退出全屏：藏起地址栏和底栏，原生网页撑满（只认当前标签）。fromPage = 网页自己要的（垫片报来的），否则是浏览器菜单里点的
+  if ((BR.full === t.k) === on) return;
+  if (!on && fromPage && BR.fullOwn) return;       // 菜单里点的全屏归浏览器管：网页的「退出全屏」、跳转时垫片报的 off 都不算，只有用户自己退
+  BR.full = on ? t.k : 0;
+  BR.fullOwn = on && !fromPage;
+  if (!on && !fromPage && t.wid) IAB.executeScript({ id: t.wid, code: "try{document.exitFullscreen()}catch(e){}" }).catch(() => {});   // 页面里的全屏状态也一起收回
+  const pg = curPage();
+  if (pg && pg.key === "browser") {
+    const b = pg.el.querySelector(".br");
+    if (b) { b.classList.toggle("full", on); if (on) b.dataset.act = "brfulloff"; else delete b.dataset.act; }   // 全屏时点边缘空白 = 退出（页面没自带退出键也不会困住）
+    brSync();
+  }
+}
+const brFullOff = () => { const t = BR.tabs.find(x => x.k === BR.full); if (t) { brFull(t, false); return true; } BR.full = 0; BR.fullOwn = false; return false; };
 function brFail(e) {
   BR.fails++;
   if (BR.fails >= 3 && !BR.broken) { BR.broken = true; hint("浏览器组件出错了，链接先交给系统浏览器：" + (e && e.message || e)); }
@@ -2275,14 +2432,17 @@ function brListen() {
     if (t === brCur()) { BR.prog = 0; brUpdBar(); }
     IAB.executeScript({ id: t.wid, code: BR_META_JS }).catch(() => {});
     if (t.desk) IAB.executeScript({ id: t.wid, code: BR_DESK_JS }).catch(() => {});
+    IAB.executeScript({ id: t.wid, code: BR_FS_JS }).catch(() => {});
+    if (t.inj && Date.now() < t.inj.until) IAB.executeScript({ id: t.wid, code: brInjJs(t.inj) }).catch(() => {});
   });
   on("pageLoadError", e => { const t = brByWid(e.id); if (t) { t.load = false; t.err = true; if (t === brCur()) { BR.prog = 0; brUpdBar(); } } });
   on("messageFromWebview", e => {
     let d = e && e.detail;
     if (!d && e && e.rawMessage) { try { d = JSON.parse(e.rawMessage).detail; } catch (x) { /* 不是我们的消息 */ } }
-    if (!d || d.m !== "meta") return;
+    if (!d || (d.m !== "meta" && d.m !== "fs")) return;
     const t = (e.id && brByWid(e.id)) || brCur();
     if (!t) return;
+    if (d.m === "fs") { if (t === brCur() || !d.on) brFull(t, !!d.on, true); return; }
     t.title = d.t || t.title;
     if (d.u) t.url = d.u;
     brHistAdd(t.url, t.title);
@@ -2291,6 +2451,7 @@ function brListen() {
   });
   on("closeEvent", e => { const t = brByWid(e.id); if (t) { t.wid = null; t.vis = false; t.dim = ""; } });
   on("popupWindowOpened", e => {                     // 页面 window.open（登录弹窗等）：当成新标签
+    brFullOff();                                     // 换了当前标签，全屏跟着退（不然 BR.full 留着旧标签号，回去又全屏、返回键白按一下）
     const parent = brByWid(e.parentId), t = brNewTab(e.url || "");
     t.wid = e.id; t.vis = !!e.visible; t.desk = !!(parent && parent.desk);
     BR.tabs.splice(Math.max(0, BR.tabs.indexOf(parent)) + 1, 0, t);
@@ -2317,6 +2478,10 @@ function brRect() {
   const b = v.getBoundingClientRect();
   if (b.width < 10 || b.height < 10) return null;
   const r = { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) };
+  const fx = brFixed(brCur()) && r.w < r.h;           // 系统页的页面竖屏：原生网页只占 16:10 那一块（跟「系统」页一样），下面留空 + 一行「横过来看」
+  if (fx) r.h = Math.min(r.h, Math.round(r.w * SYS_VH / SYS_VW));
+  if (v.classList.contains("fixr") !== fx) v.classList.toggle("fixr", fx);
+  if (fx && v.style.getPropertyValue("--fx") !== r.h + "px") v.style.setProperty("--fx", r.h + "px");
   r.key = `${r.x},${r.y},${r.w},${r.h}`;
   return r;
 }
@@ -2399,17 +2564,19 @@ function brTabsHtml() {
     `<div class="br-shot"${t.shot ? ` style="background-image:url(${t.shot})"` : ""}>${t.shot ? "" : `<b>${esc((brHost(t.url) || "＋").slice(0, 1).toUpperCase())}</b>`}</div></div>`).join("")}</div>`;
 }
 function brStartHtml() {
-  const tile = (name, url, sub) => `<button class="br-tile" data-act="bropenu" data-u="${esc(url)}"><span class="br-fav">${esc((name || brHost(url)).slice(0, 1).toUpperCase())}</span><span class="br-tn">${esc(name || brHost(url))}</span></button>`;
+  const tile = (name, url, yht) => `<button class="br-tile" data-act="${yht ? "bryht:" + esc(yht) : "bropenu"}" data-u="${esc(url)}"><span class="br-fav">${esc((name || brHost(url)).slice(0, 1).toUpperCase())}</span><span class="br-tn">${esc(name || brHost(url))}</span></button>`;
   const sys = BR.sys && BR.sys.list ? BR.sys.list.map(x => tile(x.name, sysUrl({ mount: x.mount, path: x.path }))).join("") : "";
+  const yht = BR.sys && BR.sys.yht && BR.sys.yht.length ? `<div class="br-sec">医患通后台</div><div class="br-grid">${BR.sys.yht.map(x => tile(x.name, "", x.id)).join("")}</div>` : "";
   return `<div class="br-start"><div class="br-sec">我的书签</div>` +
-    (brBm.length ? `<div class="br-grid">${brBm.map(b => tile(b.t, b.u)).join("")}</div>` : '<div class="fs-note">还没有书签：打开网页后，菜单里「加入书签」。</div>') +
+    (brBm.length ? `<div class="br-grid">${brBm.map(b => tile(b.t, b.u)).join("")}</div>` : '<div class="fs-note">还没有书签：打开网页后，菜单里「加入书签」。</div>') + yht +
     `<div class="br-sec">服务器上的系统</div>${sys ? `<div class="br-grid">${sys}</div>` : '<div class="fs-note">' + (BR.sys ? "没取到系统列表" : "正在读取…") + "</div>"}</div>`;
 }
 function brHtml() {
   const t = brCur(), tabs = BR.mode === "tabs";
   const view = tabs ? brTabsHtml() : !t.url ? brStartHtml() : t.err ? `<div class="br-err">${emptyHtml("globe", "页面没打开", "网址可能不对，或者这个网站现在连不上；点下面的刷新再试")}</div>` : "";
   const btn = (act, ic, cls, label) => `<button class="br-btn ${cls || ""}" data-act="${act}" aria-label="${label}">${ico(ic)}</button>`;
-  return `<div class="br"><div class="br-top">${tabs ? `<div class="br-title">${BR.tabs.length} 个标签页</div>` :
+  const full = !!BR.full && BR.full === t.k;
+  return `<div class="br${full ? " full" : ""}"${full ? ' data-act="brfulloff"' : ""}><div class="br-top">${tabs ? `<div class="br-title">${BR.tabs.length} 个标签页</div>` :
     `<div class="br-addr"><span class="br-si">${ico("search")}</span><input id="brUrl" type="text" inputmode="url" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="搜索或输入网址" value="${esc(brShownUrl(t))}">` +
     `<button class="br-rl" data-act="brreload" aria-label="刷新">${ico(t.load ? "x" : "repeat")}</button></div><div class="br-prog"><i></i></div>`}</div>` +
     `<div class="br-view" id="brView"${t.shot && !tabs ? ` style="background-image:url(${t.shot})"` : ""}>${view}<div class="br-sug" id="brSug" hidden></div></div>` +
@@ -2440,8 +2607,8 @@ PAGES.browser = {
   ctx: "br", cls: "br-page", noSwipe: true, title: () => "浏览器",
   html: () => { brEnsure(); return brHtml(); },
   load(pg) { brEnsure(); if (!brCur().url) brLoadSys(pg); brSync(); },
-  onBack(pg) { if (BR.mode) { BR.mode = ""; draw(pg); brSync(); return true; } return false; },
-  onLeave() { BR.mode = ""; brSync(); },
+  onBack(pg) { if (brFullOff()) return true; if (BR.mode) { BR.mode = ""; draw(pg); brSync(); return true; } return false; },
+  onLeave() { BR.mode = ""; brFullOff(); brSync(); },
 };
 // 地址栏：点进去 = 全选 + 联想（藏起原生网页，联想盖在上面）；回车 = 打开
 function brSug(q_) {
@@ -2514,7 +2681,7 @@ async function brMenu() {
   const t = brCur(), has = !!t.url, bm = has && brBm.some(b => b.u === t.url);
   openSheet("brmenu", `<div class="sh-head"><b>${esc(t.title || (has ? brHost(t.url) : "浏览器"))}</b><span>${esc(has ? t.url : "还没有打开网页")}</span></div><div class="group">` +
     brSheetRow("brnew", "plus", "新标签页") +
-    (has ? brSheetRow("brreload", "repeat", "刷新") + brSheetRow("brdesk", "gauge", "电脑版网站", "按 1280 宽的电脑页面排版（个别网站可能不完美）", `<span class="sw${t.desk ? " on" : ""}"><i></i></span>`) +
+    (has ? brSheetRow("brreload", "repeat", "刷新") + brSheetRow("brfull", "expand", "全屏", "藏起地址栏和底栏；点屏幕边缘的空白处或按返回键退出") + brSheetRow("brdesk", "gauge", "电脑版网站", "按 1280 宽的电脑页面排版（个别网站可能不完美）", `<span class="sw${t.desk ? " on" : ""}"><i></i></span>`) +
       brSheetRow("brbm", "book", bm ? "取消书签" : "加入书签") + brSheetRow("brcopy", "copy", "复制网址") + brSheetRow("brsys", "globe", "用系统浏览器打开") : "") +
     `</div><div class="group">` + brSheetRow("brbmlist", "book", "书签", brBm.length + " 个") + brSheetRow("brhist", "clock", "历史记录") +
     brSheetRow("brengine", "search", "搜索引擎", BR_ENGINES[brSet.engine][0] + "（点一下换下一个）") +
@@ -2523,6 +2690,7 @@ async function brMenu() {
 Object.assign(ACT, {
   brsel: i => { BR.cur = +i; BR.mode = ""; const t = brCur(); t.used = Date.now(); brSave(); brPageGo(pg => draw(pg)); },
   brdrop: (i, t, e) => { e.stopPropagation(); brDrop(+i); brPageGo(pg => draw(pg)); },
+  brfulloff: (_, t, e) => { if (e.target === t) brFullOff(); },      // 只认点在边缘空白处（点到网页区 / 里面的东西不算）
   brdone: () => { BR.mode = ""; brPageGo(pg => draw(pg)); },
   brtabs: async () => { await brSnap(); BR.mode = "tabs"; brPageGo(pg => draw(pg)); },
   brnew: () => {
@@ -2532,6 +2700,13 @@ Object.assign(ACT, {
     brPageGo(pg => { draw(pg); brLoadSys(pg); });
   },
   bropenu: (_, t) => brGoto(t.dataset.u),
+  bryht: async id => {                               // 医患通后台：服务器给地址 + 保活那份登录，浏览器里直接是登录好的
+    try {
+      const r = await q("yht", { site: id });
+      await brOpen(r.url, true, r.token ? { o: new URL(r.url).origin, tok: r.token, to: r.url } : null);
+      if (!r.token) hint(r.name + "的登录已失效，要重新扫码登录");          // 打开页面会重画底栏，提示放在后面
+    } catch (e) { hint(e.message); }
+  },
   brback: () => { const t = brCur(); if (t && t.wid) IAB.goBack({ id: t.wid }).catch(() => {}); },
   brfwd: () => { const t = brCur(); if (t && t.wid) IAB.executeScript({ id: t.wid, code: "history.forward()" }).catch(() => {}); },
   brreload: () => {
@@ -2543,6 +2718,7 @@ Object.assign(ACT, {
     if (t.wid) IAB.reload({ id: t.wid }).catch(() => {});
     brPageGo(pg => draw(pg));
   },
+  brfull: () => { closeSheet(); const t = brCur(); if (t && t.url) brFull(t, true); },       // 浏览器自带的全屏，任何网页都能用，不靠网页配合
   brclose: () => { if (!back()) { /* 栈底没有可退的（不会发生：浏览器总在 Claude 上面） */ } },
   brmenu: () => { BR.clearArm = false; brMenu(); },
   brdesk: () => {                                    // 电脑版 ⇄ 手机版：换浏览器标识要重开原生 WebView（地址留着）
