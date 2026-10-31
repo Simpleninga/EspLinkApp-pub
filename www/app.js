@@ -87,6 +87,11 @@ const ICONS = {
   term: '<path d="M5 7.5l4 4-4 4M11.5 16.5H19"/>',
   file: '<path d="M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"/><path d="M13 3.5V8.5h5"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.7"/><path d="M20.5 15.5L16 11l-8.5 8.5"/>',
+  audio: '<path d="M5.5 9.5v5M9 6.5v11M12.5 4.5v15M16 7.5v9M19.5 10v4"/>',                                // 音频：几条波纹
+  doc: '<path d="M6.5 3.5h6L18 9v10.5a1 1 0 0 1-1 1H7.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"/><path d="M12.5 3.5V9H18"/><path d="M7.5 12.5l2.2 5 1.8-3.5 1.8 3.5 2.2-5"/>',   // Word：文档 + W
+  sheet: '<rect x="4" y="4.5" width="16" height="15" rx="2"/><path d="M4 9.5h16M4 14.5h16M9.5 4.5V19.5"/>',                          // Excel：表格
+  slides: '<rect x="3.5" y="5" width="17" height="10.5" rx="2"/><path d="M12 15.5v3M8.5 18.5h7"/>',                                    // PPT：幻灯片
+  pdf: '<path d="M6.5 3.5h6L18 9v10.5a1 1 0 0 1-1 1H7.5a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"/><path d="M12.5 3.5V9H18"/><path d="M8 13.5h8M8 16.5h6"/>',   // PDF：文档 + 文字行
   camera: '<path d="M4 8.5a2 2 0 0 1 2-2h2.2l1.6-2.2h4.4l1.6 2.2H18a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.6"/>',
   folder: '<path d="M3.5 7a2 2 0 0 1 2-2h4.2l2 2.3h6.8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
   pencil: '<path d="M14.5 5.5l4 4L9 19H5v-4l9.5-9.5z"/>',
@@ -692,6 +697,8 @@ const WHO = {
   xy: { av: () => LOGO, name: "小芽" },
   oc: { av: () => ico("spark"), name: "OpenCode" },
   ocb: { av: () => ico("spark"), name: "opencode—百度" },
+  cbi: { av: () => ico("spark"), name: "CodeBuddy 国际版" },
+  cbc: { av: () => ico("spark"), name: "CodeBuddy 国内版" },
 };
 function attHtml(files) {
   if (!files || !files.length) return "";
@@ -699,6 +706,25 @@ function attHtml(files) {
   return `<div class="att${imgs.length > 1 ? " many" : ""}">` +
     imgs.map(f => `<img src="${esc(f.url || fileUrl(f.id))}" loading="lazy" data-act="img" alt="">`).join("") +
     docs.map(f => `<button class="fcard" data-act="fopen:${esc(f.id)}" data-name="${esc(f.name)}" data-size="${f.size || 0}"><span class="f-ic">${ico("file")}</span><span><b>${esc(f.name)}</b><span>${fsize(f.size || 0)}</span></span></button>`).join("") + "</div>";
+}
+// 文件卡片图标按类型分（2026-10-31 用户：MP3 波纹、Word/Excel 各用各的 logo）；颜色贴近各家官方色
+const FILE_TYPES = {
+  audio: ["audio", "#7C5CFF"], video: ["play", "#7C5CFF"],
+  doc: ["doc", "#2B579A"], sheet: ["sheet", "#217346"], slides: ["slides", "#D24726"], pdf: ["pdf", "#E2574C"],
+};
+function fileIco(name) {
+  const k = fsKind(name);
+  const t = FILE_TYPES[k === "audio" ? "audio" : k === "video" ? "video" : (k === "docx" || k === "office") ? "doc"
+    : k === "pptx" ? "slides" : k === "sheet" ? "sheet" : k === "pdf" ? "pdf" : null];
+  return t ? `<span class="f-ic" style="background:${t[1]};color:#fff">${ico(t[0])}</span>` : `<span class="f-ic">${ico("file")}</span>`;
+}
+function fileHtml(m, who) {                          // AI 写出的交付类文件（服务器路径）：图片直接内联，别的给文件卡片，点开进 fileView（2026-10-31）
+  const f = m.f || {};
+  const av = (WHO[who] || WHO.claude).av();
+  const inner = f.kind === "image"
+    ? `<div class="att"><img src="${esc(fsUrl(f.path))}" loading="lazy" data-act="img" alt=""></div>`
+    : `<div class="att"><button class="fcard" data-act="fpath:${esc(f.path)}" data-size="${f.size || 0}" data-mtime="${f.mtime || 0}">${fileIco(f.name)}<span><b>${esc(f.name)}</b><span>${fsize(f.size || 0)}</span></span></button></div>`;
+  return `<div class="m ai"><span class="av">${av}</span><div class="bub file-b">${inner}</div></div>`;
 }
 function msgHtml(pg, m, who, cont) {
   if (m.r === "me") {
@@ -719,7 +745,7 @@ function emptyHtml(icon, title, sub) {
 const LOADING = '<div class="loading"><span class="spin"></span></div>';
 
 // 发出去还没回到对话里的话（打的字、正在识别的语音）：先摆一个半透明气泡，服务器那边有了就去掉
-const pends = { claude: [], xz: [], xy: [], oc: [], ocb: [] };
+const pends = { claude: [], xz: [], xy: [], oc: [], ocb: [], cbi: [], cbc: [] };
 let pendSeq = 0;
 function addPend(to, p) { p.k = ++pendSeq; p.t = Date.now(); pends[to].push(p); redrawThread(to); return p; }
 function dropPend(to, k) { pends[to] = pends[to].filter(p => p.k !== k); redrawThread(to); }
@@ -850,13 +876,17 @@ let tiles = null;                                    // op home 的数据：Clau
 function secKey() { const s = stack.find(p => p.sec); return s ? s.key : "claude"; }
 function drawerHtml(d) {
   const c = (d && d.claude) || {}, busy = c.busy > 0, at = secKey();
+  const oc = (d && d.oc) || {}, ob = (d && d.ocb) || {}, cb = (d && d.cb) || {};
+  const bi = cb.bi || {}, bc = cb.bc || {};
   const row = (k, ic, name, sub, dot, to) => `<button class="row${(to || PAGE_OF[k]) === at ? " on" : ""}" style="--c:var(--${k});--cs:var(--${k}-soft)" data-act="dwgo:${to || PAGE_OF[k]}">` +
     `<span class="r-ic">${ico(ic)}</span><span class="r-main"><span class="r-t">${name}</span><span class="r-s">${esc(sub)}</span></span>` +
     `${dot ? '<span class="dot"></span>' : ""}<span class="chev">${ico("chev")}</span></button>`;
+  const eng = (k, ic, name, e, idle, to) => row(k, ic, name, e.busy > 0 ? (e.busy > 1 ? `${e.busy} 个会话在忙` : "正在工作") : e.unread > 0 ? "有新回复" : idle, e.busy > 0 || e.unread > 0, to);
   return `<div class="dw-head"><b>小芽</b><span class="conn-t"></span></div><div class="group">` +
     row("xy", "spark", "小芽", "你的管家 · 说话办事") +
     row("claude", "claude", "Claude", busy ? (c.busy > 1 ? `${c.busy} 个会话在忙` : "正在工作") : c.unread ? "有新回复" : "待命", busy || c.unread) +
-    row("oc", "spark", "OpenCode", "免费模型") + row("oc", "spark", "opencode—百度", "百度云 · 免费模型", false, "ocb") +
+    eng("oc", "spark", "OpenCode", oc, "免费模型") + eng("oc", "spark", "opencode—百度", ob, "百度云 · 免费模型", "ocb") +
+    eng("oc", "spark", "CodeBuddy 国际版", bi, "腾讯 · 免费 + 积分模型", "cbi") + eng("oc", "spark", "CodeBuddy 国内版", bc, "腾讯 · 免费 + 积分模型", "cbc") +
     row("xz", "chat", "小智", "AI 对话") + row("news", "news", "日报", d && d.news && d.news.n ? `今天 ${d.news.n} 条` : "今日要闻") +
     row("plg", "plug", "插座", "BroadLink · 家里") + row("fs", "folder", "文件", "硅谷服务器 · 只读") + row("sys", "layers", "系统", "运营看板 · 工具") +
     (IAB && !BR.broken ? row("br", "globe", "浏览器", "地址栏 · 标签页 · 书签") : "") + "</div>";
@@ -864,7 +894,9 @@ function drawerHtml(d) {
 let dwOn = false;
 function drawerUpd() {
   const d = tiles, c = (d && d.claude) || {};
-  $("#navMenu").classList.toggle("dot", c.busy > 0 || !!c.unread);
+  const oc = (d && d.oc) || {}, ob = (d && d.ocb) || {}, cb = (d && d.cb) || {};
+  const dot = [c, oc, ob, cb.bi || {}, cb.bc || {}].some(e => (e.busy || 0) > 0 || (e.unread || 0) > 0);
+  $("#navMenu").classList.toggle("dot", dot);
   if (dwOn) { $("#dwPanel").innerHTML = drawerHtml(d); updConn(); }
 }
 function openDrawer() {
@@ -1133,6 +1165,7 @@ function workHtml(b, items) {
 function cItemHtml(pg, m, k, cont, busy) {
   if (m.r === "tool") return toolHtml(m, TOOL, busy && m.res == null, k);
   if (m.r === "think") return thinkHtml(m, k);
+  if (m.r === "file") return fileHtml(m, "claude");
   if (m.r === "more") return `<button class="m note more" data-act="cmore">显示更早的消息（还有 ${m.at} 条）</button>`;
   return msgHtml(pg, m, "claude", cont);
 }
@@ -1173,7 +1206,9 @@ function cMerge(d, m) {
   const L = d.msgs;
   let changed = false;
   for (const it of m.add || []) {
-    const dup = it.r === "tool" ? L.some(x => x.r === "tool" && x.id === it.id) : L.slice(-8).some(x => x.r === it.r && x.text === it.text);
+    const dup = it.r === "tool" ? L.some(x => x.r === "tool" && x.id === it.id)
+      : it.r === "file" ? L.some(x => x.r === "file" && x.f && x.f.path === (it.f && it.f.path))
+      : L.slice(-8).some(x => x.r === it.r && x.text === it.text);
     if (!dup) { L.push(it); changed = true; }
   }
   for (const r of m.res || []) {
@@ -1234,11 +1269,20 @@ PAGES.uplog = {
 // ---------------------------------------------------------------- OpenCode（2026-10-17：免费的 opencode 模型，和 Claude 平级）
 // 两台引擎：oc = 本机；ocb = 百度云那台（2026-10-26 经 ocb 桥，侧边栏单独一项）。界面共用，数据走不同的前缀。
 const OC_VAR_ZH = { none: "关", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "很高", max: "最高" };
+// cbi / cbc = 腾讯 CodeBuddy 的国际版 / 国内版（2026-10-29），服务器上各用一份独立登录，op 前缀 bi / bc；型号有免费的，也有按积分倍率扣的
 const OC = {
   oc: { key: "oc", p: "o", sess: "ocsess", who: "oc", name: "OpenCode", over: "OpenCode",
-        tip: "全免费（挂在 opencode 网关上）；换型号接着这个会话聊，不用新开" },
+        tip: "全免费（挂在 opencode 网关上）；换型号接着这个会话聊，不用新开",
+        empty: ["跟 OpenCode 聊点什么", "免费的模型：Claude 额度、DeepSeek 余额用完时在这里顶上；打字、按住说话都行"] },
   ocb: { key: "ocb", p: "ob", sess: "ocbsess", who: "ocb", name: "opencode—百度", over: "opencode—百度",
-         tip: "免费模型，跑在百度云那台服务器上；换型号接着这个会话聊，不用新开" },
+         tip: "免费模型，跑在百度云那台服务器上；换型号接着这个会话聊，不用新开",
+         empty: ["跟百度上的 OpenCode 聊点什么", "跑在百度云那台服务器上，免费模型；打字、按住说话都行"] },
+  cbi: { key: "cbi", p: "bi", sess: "cbisess", who: "cbi", name: "CodeBuddy 国际版", over: "CodeBuddy 国际版",
+         tip: "标「免费」的不扣积分，标 ×N 的每次按倍率扣国际版账号的积分；换型号接着这个会话聊",
+         empty: ["跟 CodeBuddy 国际版聊点什么", "腾讯的编程助手，国际站账号；默认用免费的 DeepSeek V4.1 Flash，换贵的模型要留意积分"] },
+  cbc: { key: "cbc", p: "bc", sess: "cbcsess", who: "cbc", name: "CodeBuddy 国内版", over: "CodeBuddy 国内版",
+         tip: "标「免费」的不扣积分，标 ×N 的每次按倍率扣国内版账号的积分；换型号接着这个会话聊",
+         empty: ["跟 CodeBuddy 国内版聊点什么", "腾讯的编程助手，国内站账号；默认用免费的 Hy3，换贵的模型要留意积分"] },
 };
 const oBusy = new Set();                             // 正在干活的 OpenCode 会话（引擎:会话号）
 function ocPage(k) { return stack.find(p => p.key === k); }
@@ -1249,6 +1293,7 @@ function ocHost() {                                  // 当前是哪个引擎（
 function oItemHtml(pg, m, k, cont, busy, who) {
   if (m.r === "tool") return toolHtml(m, TOOL, busy && m.res == null, k);
   if (m.r === "think") return thinkHtml(m, k);
+  if (m.r === "file") return fileHtml(m, who);
   if (m.r === "more") return `<button class="m note more" data-act="omore">显示更早的消息（还有 ${m.at} 条）</button>`;
   return msgHtml(pg, m, who, cont);
 }
@@ -1258,7 +1303,8 @@ function onOcEv(k, m) {
     if (pg && pg.data && (!m.sid || !pg.data.sid || m.sid === pg.data.sid) && cMerge(pg.data, m) && pg.data.busy) draw(pg);
     return;
   }
-  if (m.busy) oBusy.add(k + ":" + m.sid); else if (m.done) oBusy.delete(k + ":" + m.sid);
+  if (m.busy) oBusy.add(k + ":" + m.sid); else if (m.done) { oBusy.delete(k + ":" + m.sid); if (k === "cbi" || k === "cbc") quotaLoad(true); }   // CodeBuddy 收工：积分马上重取
+  bgSync(); homeDirty();                               // busy/unread 变了：后台静音保活 / 完成通知（bgSync）、侧栏「正在工作 · 有新回复」（homeDirty）跟着刷
   const pg = ocPage(k);
   if (pg && pg.data && (!pg.data.sid || m.sid === pg.data.sid)) {
     if (m.sid) pg.data.sid = m.sid;                    // 新会话：事件里带着真正的会话号
@@ -1271,7 +1317,7 @@ function makeOcPage(k) {
   return {
     ctx: "oc", bar: "composer", to: k, solid: true, thread: true, midAct: "ocmodel",
     title: pg => pg.data ? pg.data.title : E.name,
-    sub: pg => pg.data ? `<span class="mpick">${esc(pg.data.model)}${pg.data.variant ? esc(" · " + (OC_VAR_ZH[pg.data.variant] || pg.data.variant)) : ""}${ico("down")}</span>${k === "oc" ? qLiteHtml("oc") : ""}` : "",
+    sub: pg => pg.data ? `<span class="mpick">${esc(pg.data.model)}${pg.data.variant ? esc(" · " + (OC_VAR_ZH[pg.data.variant] || pg.data.variant)) : ""}${ico("down")}</span>${k === "oc" || k === "cbi" || k === "cbc" ? qLiteHtml(k) : ""}` : "",
     right: () => `<button class="nav-btn" data-act="go:${E.sess}" aria-label="历史会话">${ico("layers")}</button><button class="nav-btn" data-act="onew" aria-label="新建会话">${ico("compose")}</button>`,
     async load(pg) {
       try {
@@ -1283,11 +1329,7 @@ function makeOcPage(k) {
     html(pg) {
       const d = pg.data;
       if (!d) return LOADING;
-      if (!d.msgs.length && !pends[k].length && !d.busy) {
-        return k === "ocb"
-          ? emptyHtml("spark", "跟百度上的 OpenCode 聊点什么", "跑在百度云那台服务器上，免费模型；打字、按住说话都行")
-          : emptyHtml("spark", "跟 OpenCode 聊点什么", "免费的模型：Claude 额度、DeepSeek 余额用完时在这里顶上；打字、按住说话都行");
-      }
+      if (!d.msgs.length && !pends[k].length && !d.busy) return emptyHtml("spark", E.empty[0], E.empty[1]);
       const cur = d.busy ? lastMe(d.msgs) : Infinity;
       const base = cAt(d) - (d.msgs[0] && d.msgs[0].r === "more" ? 1 : 0);
       const work = b => {
@@ -1303,6 +1345,8 @@ function makeOcPage(k) {
 }
 PAGES.oc = makeOcPage("oc");
 PAGES.ocb = makeOcPage("ocb");
+PAGES.cbi = makeOcPage("cbi");
+PAGES.cbc = makeOcPage("cbc");
 function ocKeep(old, d) {                            // 同 cKeepOlder：接回已经往前翻出来的那些
   if (!old || old.sid !== d.sid || cAt(old) >= cAt(d) || cAt(d) > old.n) return false;
   const lead = old.msgs[0].r === "more" ? 1 : 0;
@@ -1332,6 +1376,8 @@ function makeOcSessions(k) {
 }
 PAGES.ocsess = makeOcSessions("oc");
 PAGES.ocbsess = makeOcSessions("ocb");
+PAGES.cbisess = makeOcSessions("cbi");
+PAGES.cbcsess = makeOcSessions("cbc");
 async function openOcModels() {
   const E = ocHost();
   openSheet("model", `<div class="sh-head"><b>${esc(E.name)} 的设置</b><span>${esc(E.tip)}</span></div><div id="mdlBox">${LOADING}</div>`);
@@ -1339,7 +1385,7 @@ async function openOcModels() {
   try {
     const d = await q(E.p + "_models");
     const pick = (act, cur, ic, t, sub) => `<button class="row${cur ? " cur" : ""}" data-act="${act}"><span class="r-ic">${ico(ic)}</span><span class="r-main"><span class="r-t">${esc(t)}</span>${sub ? `<span class="r-s">${esc(sub)}</span>` : ""}</span>${cur ? `<span class="check">${ico("check")}</span>` : ""}</button>`;
-    let html = `<div class="sh-sec">模型 · 免费</div>${qLine(E.key)}<div class="group">` + d.list.map(([k, v]) => {
+    let html = `<div class="sh-sec">${esc(d.title || "模型 · 免费")}</div>${qLine(E.key)}<div class="group">` + d.list.map(([k, v]) => {
       const cur = d.cur === k;
       return `<button class="row${cur ? " cur" : ""}" data-act="ocmodelpick:${k}"><span class="r-main"><span class="r-t">${esc(v)}</span></span>${cur ? `<span class="check">${ico("check")}</span>` : ""}</button>`;
     }).join("") + `</div>`;
@@ -1987,6 +2033,8 @@ function onEv(m) {
   else if (m.w === "hx") onHxEv(m);
   else if (m.w === "o") onOcEv("oc", m);
   else if (m.w === "ob") onOcEv("ocb", m);
+  else if (m.w === "bi") onOcEv("cbi", m);
+  else if (m.w === "bc") onOcEv("cbc", m);
 }
 
 // ---------------------------------------------------------------- 计时（Claude 干活、小芽通话）
@@ -2242,6 +2290,7 @@ const ACT = {
     if (!m) return;
     if (m.t === "d") go("files", { path: p }); else go("fileView", { path: p, size: m.size, mtime: m.mtime });
   },
+  fpath: (p, t) => { if (p) go("fileView", { path: p, size: +t.dataset.size || 0, mtime: +t.dataset.mtime || 0 }); },   // AI 发来的文件卡片：直接打开看
   img: (_, t) => { const v = $("#viewer"); v.querySelector("img").src = t.src; v.classList.add("on"); },
   copycode: (_, t) => copy(t.parentNode.querySelector("code").textContent),   // 点按本身震一下，不弹「已复制」
   saveSettings: () => saveSettings(),
@@ -2922,6 +2971,14 @@ function qInner(kind) {
     return qRow("免费档", o.limited ? `被限速了<i>最近一次 ${o.last}</i>` : "没有限速" + (o.last ? `<i>上次 ${o.last}</i>` : ""), o.limited);
   }
   if (kind === "ocb") return qRow("免费档", "跑在百度云上，没有额度数据");
+  if (kind === "cbi" || kind === "cbc") {              // CodeBuddy 积分：合计 + 每个积分包一行（剩 / 总量 · 到期或重置日）
+    const c = d[kind];
+    if (!c) return qRow("积分", "查询中…");
+    const n = v => +Number(v).toFixed(2), pk = c.pk || [];
+    return (pk.length ? qRow("积分", `剩 ${n(c.left)}<i>共 ${n(c.size)}</i>`, c.left <= 0) : "") +
+      (pk.length > 1 ? pk.map(x => qRow(esc(x.n), `剩 ${n(x.left)}<i>共 ${n(x.size)} · ${esc(x.end)}${x.k}</i>`, x.left <= 0)).join("") : "") +
+      (c.err ? qRow("积分", esc(c.err), true) : "") || qRow("积分", "暂无数据");
+  }
   const t = d.today || {};
   if (kind === "qwen") return qRow("百炼（通义）", `今天语音识别 ${t.asr || 0} 次<i>官方额度查不到</i>`);
   if (kind === "xz") return qRow("豆包", `今天小智回答 ${t.xz || 0} 次<i>官方额度查不到</i>`);
@@ -2935,13 +2992,14 @@ function qLite(kind) {
   if (kind === "claude") return d.claude && d.claude.five ? `5小时剩 ${d.claude.five.left}%` : "";
   if (kind === "deepseek") return d.deepseek && d.deepseek.balance != null ? `余额 ${d.deepseek.balance}` : "";
   if (kind === "oc") return d.oc && d.oc.limited ? "被限速" : "";
+  if (kind === "cbi" || kind === "cbc") return d[kind] && d[kind].left != null ? `积分剩 ${+Number(d[kind].left).toFixed(2)}` : "";
   return "";
 }
 const qLiteHtml = kind => { const t = qLite(kind); return t ? `<span class="qlite"> · ${esc(t)}</span>` : ""; };
 function quotaUpd() {
   document.querySelectorAll(".qline").forEach(e => { e.innerHTML = qInner(e.dataset.q); });
   const pg = curPage();
-  if (pg && pg.def.sub && ["claude", "oc", "xz"].includes(pg.key)) $("#navSub").innerHTML = pg.def.sub(pg);
+  if (pg && pg.def.sub && ["claude", "oc", "cbi", "cbc", "xz"].includes(pg.key)) $("#navSub").innerHTML = pg.def.sub(pg);
 }
 setInterval(() => {
   if (document.hidden || !online) return;
@@ -3340,7 +3398,7 @@ function drawWave() {
 
 // ---------------------------------------------------------------- 按住说话（输入栏里的那条）：按下开录、松开发出、上滑取消
 let ptt = null, pttHeld = false, pttY0 = 0, cancelArm = false, recN = 0, pttCmp = null;
-const REC_C = { claude: "var(--claude-b)", xz: "var(--xz-b)", xy: "var(--xy-b)", oc: "var(--oc-b)" };
+const REC_C = { claude: "var(--claude-b)", xz: "var(--xz-b)", xy: "var(--xy-b)", oc: "var(--oc-b)", cbi: "var(--oc-b)", cbc: "var(--oc-b)" };
 async function pttStart(cmp, y) {
   if (ptt || pttHeld) return;
   ac();
@@ -4049,7 +4107,7 @@ const cBusy = new Set();                             // 正在干活的 Claude �
 let bgLast = "";
 function bgSync() {
   if (!Link) return;
-  const o = { keep: bgOn, notify: noteOn, call: call.on, busy: cBusy.size > 0 };
+  const o = { keep: bgOn, notify: noteOn, call: call.on, busy: cBusy.size > 0 || oBusy.size > 0 };
   const k = JSON.stringify(o);
   if (k === bgLast) return;
   bgLast = k;
@@ -4062,6 +4120,10 @@ function onNote(m) {
   if (m.k === "xy" && !(pg && pg.key === "home")) flash(m.body, { title: "小芽" });
   if (m.k === "xz" && call.on && call.to === "xz") flash(m.body, { title: "小智" });      // 打给小智收起成悬浮球时，她答的话在球上冒一下
   if (m.k === "cron") flash(m.body, { title: m.title });
+  if (m.k === "claude" || m.k === "oc" || m.k === "ob") {   // AI（Claude/OpenCode/CodeBuddy）干完活：通话在悬浮球冒一句，没通话在底栏上方提示一行「XX 做完了」（不弹框）
+    if (call.on) flash(m.body, { title: m.title });
+    else hint(m.title);
+  }
 }
 
 // ---------------------------------------------------------------- 登录（2026-10-14：安装包里不再带服务器密钥，账号密码换一个令牌）

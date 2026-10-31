@@ -741,12 +741,13 @@ body:not(.at-home) #navMenu { opacity: 0; transform: translateX(8px); pointer-ev
 .btn.danger { background: var(--danger); color: #fff; }
 .ask-done { margin-top: 8px; font-size: 13px; color: var(--text-2); }
 
-/* 小芽发来的文件 */
+/* 小芽发来的文件 / AI 写出的交付类文件 */
 .m.ai .bub.file-b { padding: 0; background: transparent; box-shadow: none; }
-.bub.file-b .att { margin: 0; }
+.bub.file-b .att { margin: 0; justify-content: flex-start; align-items: flex-start; max-width: 100%; }   /* 不是用户附件：左对齐、别被 82% 卡出重叠 */
 .bub.file-b .cap { margin-top: 6px; font-size: 13px; color: var(--text-2); }
 button.fcard { color: var(--text); }
 .fcard b { display: block; font-size: 14px; font-weight: 600; word-break: break-all; }
+.bub.file-b .fcard b { white-space: normal; overflow: visible; text-overflow: clip; }   /* 文件名整段显示，不截断 */
 .fcard span span { font-size: 12px; color: var(--text-2); }
 
 /* 菜单里的行带图标 */

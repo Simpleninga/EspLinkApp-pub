@@ -603,9 +603,15 @@ final class LinkEngine: NSObject {
     private var playWired = false
     private var micEng: AVAudioEngine?
 
+    private static let sessionOpts: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+
     private func audioSession() {
         let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers])
+        // 分类没变就别再设一遍：在已激活的会话上重复 setCategory 会让别的 App 的音乐顿一下
+        // （2026-10-31 用户：每发一句新消息，后台放的音乐都被卡一下）
+        if s.category != .playAndRecord || s.categoryOptions != LinkEngine.sessionOpts || s.mode != .default {
+            try? s.setCategory(.playAndRecord, mode: .default, options: LinkEngine.sessionOpts)
+        }
         try? s.setActive(true)
     }
 
@@ -959,7 +965,9 @@ final class LinkEngine: NSObject {
     }
 
     private func updateBg() {
-        let need = keep && want && busy && !liveOn             // 通话中麦克风开着，本来就不会被挂起；在前台就先放上，切后台时已经在响
+        // 前台不放静音保活：前台本来就不会被挂起，而一开音频会话就会让别的 App 的音乐顿一下
+        // （2026-10-31 用户：每次发新消息，后台放的音乐都被卡一下）。切后台时 setFg 会立刻接上，beginBackgroundTask 兜着这几秒
+        let need = keep && want && busy && !liveOn && !fg     // 通话中麦克风开着，本来就不会被挂起
         if need && !keeping {
             guard ensurePlay(), let buf = AVAudioPCMBuffer(pcmFormat: fmt16, frameCapacity: 16000) else { return }
             buf.frameLength = 16000                             // 一秒静音循环放
