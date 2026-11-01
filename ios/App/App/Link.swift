@@ -36,6 +36,7 @@ public class LinkPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "perm", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pick", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeTarget", returnType: CAPPluginReturnPromise),
     ]
     let L = LinkEngine.shared
 
@@ -45,6 +46,7 @@ public class LinkPlugin: CAPPlugin, CAPBridgedPlugin {
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.L.setFg(false) }
         nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in self?.L.setFg(true) }
         bridge?.notificationRouter.localNotificationHandler = self
+        LinkEngine.registerNotificationCategories()
     }
 
     @objc func start(_ call: CAPPluginCall) {
@@ -99,6 +101,12 @@ public class LinkPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func perm(_ call: CAPPluginCall) { LinkEngine.notePermission(); call.resolve() }
+
+    @objc func takeTarget(_ call: CAPPluginCall) {
+        var out: [String: Any] = [:]
+        for (k, v) in L.takeTarget() ?? [:] { out[k] = v }
+        call.resolve(out)
+    }
 
     @objc func status(_ call: CAPPluginCall) {
         L.q.async { call.resolve(["live": self.L.liveOn, "sp": self.L.speaking, "up": self.L.up, "mute": self.L.liveMuted, "sound": self.L.soundOff]) }
@@ -184,10 +192,32 @@ private final class PickBox: @unchecked Sendable {
 // App 在前台时：定时提醒照样弹系统横幅（2026-10-16 起 App 里不再弹提示，在别的页面上会错过）；别的通知前台本来就不发
 extension LinkPlugin: NotificationHandlerProtocol {
     public func willPresent(notification: UNNotification) -> UNNotificationPresentationOptions {
-        notification.request.content.threadIdentifier == "cron" ? [.banner, .list, .sound] : []
+        notification.request.content.categoryIdentifier == LinkEngine.cronCategory ? [.banner, .list, .sound] : []
     }
 
-    public func didReceive(response: UNNotificationResponse) {}
+    public func didReceive(response: UNNotificationResponse) {
+        let c = response.notification.request.content, a = response.actionIdentifier
+        if a == "snooze" {                       // 定时提醒：10 分钟后再弹一次，不打开 App
+            let n = UNMutableNotificationContent()
+            n.title = c.title
+            n.subtitle = c.subtitle
+            n.body = c.body
+            n.sound = c.sound
+            n.categoryIdentifier = c.categoryIdentifier
+            n.threadIdentifier = c.threadIdentifier
+            n.userInfo = c.userInfo
+            let r = UNNotificationRequest(identifier: "snooze-\(UUID().uuidString)", content: n,
+                                          trigger: UNTimeIntervalNotificationTrigger(timeInterval: 600, repeats: false))
+            UNUserNotificationCenter.current().add(r, withCompletionHandler: nil)
+            return
+        }
+        guard a == UNNotificationDefaultActionIdentifier || a == "view" else { return }
+        var t: [String: String] = [:]
+        for k in ["route", "sid", "job", "k"] {
+            if let v = c.userInfo[k] as? String, !v.isEmpty { t[k] = v }
+        }
+        if !t.isEmpty { LinkEngine.shared.queueTarget(t) }
+    }
 }
 
 // ---------------------------------------------------------------- IMA ADPCM（跟 server.py / app.js 同一套表）
@@ -355,8 +385,33 @@ final class SysSpeech {
 
 final class LinkEngine: NSObject {
     static let shared = LinkEngine()
+    static let resultCategory = "esplink.result"
+    static let cronCategory = "esplink.cron"
     let q = DispatchQueue(label: "esplink.link")
     var emit: ((String, [String: Any]) -> Void)?
+    private let targetLock = NSLock()
+    private var pendingTarget: [String: String]?
+
+    static func registerNotificationCategories() {
+        let view = UNNotificationAction(identifier: "view", title: "查看结果", options: [.foreground])
+        let snooze = UNNotificationAction(identifier: "snooze", title: "10 分钟后再提醒", options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: resultCategory, actions: [view], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: cronCategory, actions: [view, snooze], intentIdentifiers: [], options: []),
+        ])
+    }
+
+    func queueTarget(_ t: [String: String]) {
+        targetLock.lock(); pendingTarget = t; targetLock.unlock()
+        var out: [String: Any] = [:]
+        for (k, v) in t { out[k] = v }
+        DispatchQueue.main.async { [weak self] in self?.emit?("target", out) }
+    }
+
+    func takeTarget() -> [String: String]? {
+        targetLock.lock(); defer { targetLock.unlock() }
+        let t = pendingTarget; pendingTarget = nil; return t
+    }
 
     // ---------------------------------------------------------------- 连接
     private var servers = [String](), token = "", hello = ""
@@ -992,6 +1047,7 @@ final class LinkEngine: NSObject {
     }
 
     static func notePermission() {
+        registerNotificationCategories()
         UNUserNotificationCenter.current().getNotificationSettings { s in
             if s.authorizationStatus == .notDetermined {
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -1018,10 +1074,15 @@ final class LinkEngine: NSObject {
                 let local = t + skew, wait = local - Date().timeIntervalSince1970
                 guard wait > 1 else { continue }
                 let n = UNMutableNotificationContent()
-                n.title = "⏰ " + ((a["name"] as? String) ?? "定时提醒")
-                n.body = "小芽的定时提醒"
+                let name = (a["name"] as? String) ?? "定时提醒"
+                let text = (a["text"] as? String) ?? ""
+                n.title = "定时提醒 · " + name
+                n.subtitle = ((a["schedule"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                n.body = text.isEmpty ? "到点了，打开小芽看看" : String(text.prefix(160))
                 n.sound = .default
-                n.threadIdentifier = "cron"
+                n.categoryIdentifier = LinkEngine.cronCategory
+                n.threadIdentifier = "cron-" + id
+                n.userInfo = ["route": "xycron", "job": id, "k": "cron"]
                 c.add(UNNotificationRequest(identifier: "alarm-\(id)-\(Int(t))", content: n,
                                             trigger: UNTimeIntervalNotificationTrigger(timeInterval: wait, repeats: false)), withCompletionHandler: nil)
                 at[id, default: []].append(local)
@@ -1035,16 +1096,30 @@ final class LinkEngine: NSObject {
             liveText = m["body"] as? String ?? ""
             activityUpdate()
         }
-        let k = m["k"] as? String ?? "", job = m["job"] as? String
+        let k = m["k"] as? String ?? "", jobOpt = m["job"] as? String
         guard notify, !fg || k == "cron" else { return }          // 定时提醒在前台也发（上面 willPresent 弹横幅），别的只在后台发
         let now = Date().timeIntervalSince1970
-        if k == "cron", let job = job, (alarmAt[job] ?? []).contains(where: { abs($0 - now) < 600 }) { return }   // 预约的系统通知已经弹过这条了
+        if k == "cron", let job = jobOpt, (alarmAt[job] ?? []).contains(where: { abs($0 - now) < 600 }) { return }   // 预约的系统通知已经弹过这条了
         let c = UNMutableNotificationContent()
+        let sid = (m["sid"] as? String) ?? "", job = (m["job"] as? String) ?? ""
+        let route = (m["route"] as? String) ?? ""
         c.title = m["title"] as? String ?? ""
+        c.subtitle = ((m["subtitle"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         c.body = m["body"] as? String ?? ""
         if k != "xy" { c.sound = .default }       // 小芽一句句来，别每句都响
-        c.threadIdentifier = k
-        let r = UNNotificationRequest(identifier: "esplink-" + k + (job.map { "-" + $0 } ?? ""), content: c, trigger: nil)   // 同一类换掉上一条（定时提醒按任务分开）
+        if #available(iOS 15.0, *) { c.interruptionLevel = k == "xy" ? .passive : .active }
+        c.categoryIdentifier = k == "cron" ? LinkEngine.cronCategory : LinkEngine.resultCategory
+        c.threadIdentifier = k + "-" + (sid.isEmpty ? (job.isEmpty ? "latest" : job) : sid)
+        var info: [String: String] = ["k": k]
+        if !route.isEmpty { info["route"] = route }
+        if !sid.isEmpty { info["sid"] = sid }
+        if !job.isEmpty { info["job"] = job }
+        var ui: [AnyHashable: Any] = [:]
+        for (key, value) in info { ui[key] = value }
+        c.userInfo = ui
+        c.summaryArgument = c.subtitle
+        let tag = sid.isEmpty ? (job.isEmpty ? "latest" : job) : sid
+        let r = UNNotificationRequest(identifier: "esplink-" + k + "-" + tag, content: c, trigger: nil)   // 同一会话换掉上一条，不同会话不互相覆盖
         UNUserNotificationCenter.current().add(r, withCompletionHandler: nil)
     }
 }

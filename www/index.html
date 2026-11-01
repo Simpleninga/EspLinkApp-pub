@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
 <title>小芽</title>
 <link rel="stylesheet" href="style.css" id="css0">
-<script>window.SHELL_V = 6;   /* 6 = 带浏览器插件 CapgoInAppBrowser（App 内浏览器；网页层判断靠 plug("CapgoInAppBrowser")，不靠这个数）， 安装包版本：2 = iOS 声明了相机 / 相册权限，3 = 带原生模块 Link（录音、朗读、后台、通知）+ 键盘插件，4 = iOS 原生直接开相册 / 文件（Link.pick）、前台也弹定时提醒横幅，5 = iOS 原生朗读认 p24（24k 不压缩 PCM；安卓壳没做，p24Ok 里只认 iOS）（热更新只换 <body>，这行跟着安装包走） */</script>
+<script>window.SHELL_V = 7;   /* 7 = 通知升级：副标题 / 点击直达会话 / 多任务不覆盖 / 定时提醒带正文 / Android 单色图标、通知渠道和分组；6 = 浏览器插件 CapgoInAppBrowser；2 = 相机 / 相册权限，3 = 原生 Link，4 = Link.pick + 前台提醒横幅，5 = iOS 朗读 p24（热更新只换 <body>，这行跟着安装包走） */</script>
 <script src="version.js"></script>
 <script src="boot.js"></script>
 </head>
@@ -46,10 +46,10 @@
   <section id="login" hidden>
     <div class="lg-box">
       <span class="lg-orb"></span>
-      <h1>登录</h1>
-      <p class="lg-sub">用服务器上的账号登录，这台手机只用登录一次</p>
+      <h1>小芽</h1>
+      <p class="lg-sub">你的 AI 管家，说话办事、定时提醒<br>记你的习惯</p>
       <div class="field"><input id="lgUser" placeholder="账号" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
-      <div class="field"><input id="lgPw" type="password" placeholder="密码" autocomplete="current-password" enterkeyhint="go"></div>
+      <div class="field lg-pw-field"><input id="lgPw" type="password" placeholder="密码" autocomplete="current-password" enterkeyhint="go"><button class="lg-eye" id="lgPwToggle" type="button" data-act="lgpw" aria-label="显示密码" aria-pressed="false"></button></div>
       <div class="lg-err" id="lgErr"></div>
       <button class="btn primary lg-go" id="lgGo" data-act="login">登录</button>
       <button class="lg-srv" data-act="lgsrv">服务器地址</button>

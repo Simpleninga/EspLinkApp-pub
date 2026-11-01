@@ -117,6 +117,10 @@ const ICONS = {
   minus: '<path d="M5.5 12h13"/>',
   vtop: '<path d="M6.5 5h11M12 19.5V9M7.5 13.5L12 9l4.5 4.5"/>',
   vbot: '<path d="M6.5 19h11M12 4.5V15M7.5 10.5l4.5 4.5 4.5-4.5"/>',
+  eye: '<path d="M2.8 12s3.2-5.5 9.2-5.5 9.2 5.5 9.2 5.5-3.2 5.5-9.2 5.5S2.8 12 2.8 12z"/><circle cx="12" cy="12" r="2.6"/>',
+  eyeOff: '<path d="M9.6 6.9A8.8 8.8 0 0 1 12 6.5c6 0 9.2 5.5 9.2 5.5a13 13 0 0 1-2.4 2.9M6.5 8.6C4.1 10.2 2.8 12 2.8 12S6 17.5 12 17.5c1 0 1.9-.2 2.8-.4M4 4l16 16"/>',
+  code: '<path d="M8.5 8L4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"/>',
+  cloud: '<path d="M7.5 18.5h10a3.5 3.5 0 0 0 .7-6.9A5.8 5.8 0 0 0 7 9.8a4.4 4.4 0 0 0 .5 8.7z"/>',
   expand: '<path d="M4.5 9V6.5a2 2 0 0 1 2-2H9M15 4.5h2.5a2 2 0 0 1 2 2V9M19.5 15v2.5a2 2 0 0 1-2 2H15M9 19.5H6.5a2 2 0 0 1-2-2V15"/>',
 };
 const FILLED = new Set(["play", "stop", "hang", "starOn"]);
@@ -443,6 +447,7 @@ function onConnected() {
   q("ar", { on: autoRead }).catch(() => {});
   quotaLoad();
   liveStart();
+  applyNoteTarget();
 }
 
 // 服务器广播的提示：遥控器专用的说法（按哪个键、说哪句唤醒词）在手机上没意义，去掉
@@ -523,12 +528,14 @@ function loadErr(pg, e) {
 
 // ---------------------------------------------------------------- 页面栈（全在本地）
 const PAGES = {};
+const V2_SESS = new Set(["csess", "ocsess", "ocbsess", "cbisess", "cbcsess", "xzconv", "xysess"]);
+const V2_MANAGE = new Set(["xymem", "xyskills", "xyskill", "xycron", "uplog", "plug", "files", "systems"]);
 const stack = [];
 const stage = $("#stage");
 const curPage = () => stack[stack.length - 1];
 
 function newPage(key, p) {
-  const pg = { key, p: p || {}, def: PAGES[key], el: el(`<section class="page${PAGES[key].cls ? " " + PAGES[key].cls : ""}"></section>`), data: null, raw: [], stick: true };
+  const pg = { key, p: p || {}, def: PAGES[key], el: el(`<section class="page${PAGES[key].cls ? " " + PAGES[key].cls : ""}" data-page="${key}"></section>`), data: null, raw: [], stick: true };
   pg.el.addEventListener("scroll", () => {
     pg.stick = pg.el.scrollHeight - pg.el.scrollTop - pg.el.clientHeight < 80;
     if (pg === curPage()) onScroll();
@@ -633,6 +640,10 @@ function draw(pg) {
 function chrome(pg) {
   const d = pg.def, b = document.body;
   b.dataset.ctx = d.ctx || "";
+  b.dataset.page = pg.key;
+  b.classList.toggle("v2chat", d.bar === "composer" || pg.key === "xysessView");
+  b.classList.toggle("v2sess", V2_SESS.has(pg.key));
+  b.classList.toggle("v2manage", V2_MANAGE.has(pg.key));
   b.classList.toggle("at-home", stack.length <= 1 || !!pg.sec);   // 一级页左上角是 ☰（划出侧栏），下一层才是 ←
   b.classList.toggle("solid", !!d.solid);
   $("#navTitle").textContent = d.title ? d.title(pg) : "";
@@ -830,8 +841,8 @@ function toolHtml(m, names, run, k) {
   const arg = m.args ? toolArg(m.args) : "";
   const tp = m.args ? toolPath(m.args) : "";
   const cut = !run && m.res === null;                 // Claude 的卡片：没在跑也没有结果 = 中途被停了（小芽的卡片 res 是空串，不算）
-  const mark = run ? '<span class="spin xs"></span>' : m.ok === false ? `<span class="t-bad">${ico("x")}</span>` : cut ? '<span class="t-cut">没做完</span>' : "";
-  return `<details class="m tool${run ? " run" : ""}"${k != null ? ` data-k="t${k}"` : ""}><summary>${ico(ic)}<span>${esc(verb)}${arg ? " · " + esc(arg) : ""}</span>${mark}</summary>` +
+  const mark = run ? '<span class="spin xs"></span>' : m.ok === false ? `<span class="t-bad">${ico("x")}</span>` : cut ? '<span class="t-cut">没做完</span>' : `<span class="t-ok">${ico("check")}</span>`;
+  return `<details class="m tool${run ? " run" : ""}"${k != null ? ` data-k="t${k}"` : ""}><summary>${ico(ic)}<span class="t-label">${esc(verb)}${arg ? " · " + esc(arg) : ""}</span>${mark}</summary>` +
     (tp ? `<div class="t-file">${pathTag("span", tp, esc(tp))}</div>` : "") +
     (m.args && m.args !== "{}" ? `<pre>${esc(prettyArgs(m.args))}</pre>` : "") + (m.res ? `<pre class="res${m.ok === false ? " bad" : ""}">${esc(m.res)}</pre>` : "") +
     (cut ? '<div class="t-cutnote">中途停了，没有结果</div>' : "") + "</details>";
@@ -882,14 +893,15 @@ function drawerHtml(d) {
     `<span class="r-ic">${ico(ic)}</span><span class="r-main"><span class="r-t">${name}</span><span class="r-s">${esc(sub)}</span></span>` +
     `${dot ? '<span class="dot"></span>' : ""}<span class="chev">${ico("chev")}</span></button>`;
   const eng = (k, ic, name, e, idle, to) => row(k, ic, name, e.busy > 0 ? (e.busy > 1 ? `${e.busy} 个会话在忙` : "正在工作") : e.unread > 0 ? "有新回复" : idle, e.busy > 0 || e.unread > 0, to);
-  return `<div class="dw-head"><b>小芽</b><span class="conn-t"></span></div><div class="group">` +
+  return `<div class="dw-head"><span class="orb sprout"></span><div class="dw-hd-t"><b>小芽</b><span class="conn-t"></span></div></div><div class="group dw-list">` +
     row("xy", "spark", "小芽", "你的管家 · 说话办事") +
     row("claude", "claude", "Claude", busy ? (c.busy > 1 ? `${c.busy} 个会话在忙` : "正在工作") : c.unread ? "有新回复" : "待命", busy || c.unread) +
-    eng("oc", "spark", "OpenCode", oc, "免费模型") + eng("oc", "spark", "opencode—百度", ob, "百度云 · 免费模型", "ocb") +
-    eng("oc", "spark", "CodeBuddy 国际版", bi, "腾讯 · 免费 + 积分模型", "cbi") + eng("oc", "spark", "CodeBuddy 国内版", bc, "腾讯 · 免费 + 积分模型", "cbc") +
+    eng("oc", "code", "OpenCode", oc, "免费模型") + eng("oc", "cloud", "opencode—百度", ob, "百度云 · 免费模型", "ocb") +
+    eng("oc", "layers", "CodeBuddy 国际版", bi, "腾讯 · 免费 + 积分", "cbi") + eng("oc", "code", "CodeBuddy 国内版", bc, "腾讯 · 免费 + 积分", "cbc") +
     row("xz", "chat", "小智", "AI 对话") + row("news", "news", "日报", d && d.news && d.news.n ? `今天 ${d.news.n} 条` : "今日要闻") +
     row("plg", "plug", "插座", "BroadLink · 家里") + row("fs", "folder", "文件", "硅谷服务器 · 只读") + row("sys", "layers", "系统", "运营看板 · 工具") +
-    (IAB && !BR.broken ? row("br", "globe", "浏览器", "地址栏 · 标签页 · 书签") : "") + "</div>";
+    (IAB && !BR.broken ? row("br", "globe", "浏览器", "地址栏 · 标签页 · 书签") : "") + "</div>" +
+    `<div class="dw-foot"><button data-act="dwgo:uplog">更新记录</button><span>关于 · ${esc(window.UI_VER || "开发版")}</span></div>`;
 }
 let dwOn = false;
 function drawerUpd() {
@@ -954,15 +966,17 @@ function callBtnHtml() {
   return `<button class="callbtn" data-act="call:xy">${LOGO}<span class="cb-t"><b>呼叫小芽</b><em>你的语音助手，说话就行</em></span><span class="cb-ic">${ico("phone")}</span></button>`;
 }
 function openXyMenu() {
-  openSheet("xymenu", `<div class="sh-head"><b>小芽</b><span>你的个人管家（Hermes）</span></div><div class="group">` +
-    [["hxnew", "compose", "新话题", "开一段新对话，之前的还在历史里"],
-     ["xymodels", "spark", "模型", "谁来说话：DeepSeek、通义，或 OpenCode 的免费档"],
-     ["xygo:xysess", "layers", "历史对话", "翻看、搜索以前的对话，还能接着聊"],
-     ["xygo:xymem", "book", "记忆", "小芽记住的关于你的事、她自己的笔记"],
-     ["xygo:xyskills", "spark", "技能", "她会的现成本事，可以单个关掉"],
-     ["xygo:xycron", "clock", "定时任务", "到点她自己去办的事"],
-     ["settings", "sliders", "连接与设置", "服务器地址、后台运行、通知、账号"]]
-      .map(([a, ic, t, sub]) => `<button class="row" data-act="${a}"><span class="r-ic">${ico(ic)}</span><span class="r-main"><span class="r-t">${t}</span><span class="r-s">${sub}</span></span><span class="chev">${ico("chev")}</span></button>`).join("") + "</div>");
+  const quick = [
+    ["hxnew", "compose", "新话题"],
+    ["xymodels", "spark", "模型"],
+    ["xygo:xysess", "layers", "历史对话"],
+    ["xygo:xymem", "book", "记忆"],
+    ["xygo:xyskills", "spark", "技能"],
+    ["xygo:xycron", "clock", "定时任务"],
+  ];
+  openSheet("xymenu", `<div class="sh-head"><b>小芽</b><span>你的个人管家（Hermes）</span></div><div class="v2-more-grid">` +
+    quick.map(([a, ic, t]) => `<button data-act="${a}"><span class="v2-more-ic">${ico(ic)}</span><span>${t}</span></button>`).join("") + `</div>` +
+    `<div class="group"><button class="row" data-act="settings"><span class="r-ic">${ico("sliders")}</span><span class="r-main"><span class="r-t">连接与设置</span><span class="r-s">服务器地址、后台运行、通知、账号</span></span><span class="chev">${ico("chev")}</span></button></div>`);
 }
 
 // 小芽的模型单（2026-10-17）：ds / qwen 原路进，OpenCode 那批免费档走 ocbridge 桥；/model 只切会话，config 默认不动
@@ -986,22 +1000,23 @@ async function openXyModels() {
 
 // ---------------------------------------------------------------- 小芽的管理页：记忆 / 技能 / 定时任务 / 历史对话（都走 hx，在 Hermes 那边直接读写）
 const hxq = (op, a) => q("hx", { hop: op, a: a || {} });
-const xyHead = (title, sub) => `<header class="hero"><div class="over">小芽</div><h1>${title}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}</header>`;
 function isoT(iso) {                                  // 定时任务的时间（ISO）→「10月15日 08:00」
   const t = iso ? new Date(iso) : null;
   if (!t || isNaN(t)) return "";
   return `${t.getMonth() + 1}月${t.getDate()}日 ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
 }
 PAGES.xymem = {
-  ctx: "xy", title: () => "记忆",
+  ctx: "xy", title: () => "记忆", sub: () => "小芽", solid: true,
   async load(pg) { try { pg.data = await hxq("memory"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
-    const d = pg.data, head = xyHead("记忆", "每段新对话开头小芽都会带上这些；她聊着聊着自己也会记，你也可以直接改");
+    const d = pg.data;
+    const total = d ? d.user.entries.length + d.memory.entries.length : 0;
+    const head = `<div class="v2-manage-note"><span>${d ? `${total} 条记忆` : "小芽会一直记得"}</span><span>${d ? `上限 ${d.user.limit} 字` : ""}</span></div>`;
     if (!d) return head + LOADING;
     const sec = (t, title, sub) => {
       const m = d[t], pct = Math.min(100, Math.round(m.used / Math.max(1, m.limit) * 100));
-      return `<div class="sh-sec">${title}<span class="cnt">${m.used} / ${m.limit} 字</span></div><div class="use"><i style="width:${pct}%"></i></div><div class="group">` +
-        m.entries.map((e, k) => `<button class="row" data-act="memed:${t}:${k}"><span class="r-main"><span class="r-t mem-t">${esc(e)}</span></span><span class="chev">${ico("chev")}</span></button>`).join("") +
+      return `<div class="v2-sec-head"><span><b>${title}</b><em>${sub}</em></span><span>${m.used} / ${m.limit} 字</span></div><div class="use"><i style="width:${pct}%"></i></div><div class="group">` +
+        m.entries.map((e, k) => `<button class="row" data-act="memed:${t}:${k}"><span class="r-ic">${ico("book")}</span><span class="r-main"><span class="r-t mem-t">${esc(e)}</span><span class="r-s">点一下修改</span></span><span class="chev">${ico("chev")}</span></button>`).join("") +
         `<button class="row add-row" data-act="memed:${t}:new"><span class="r-ic">${ico("plus")}</span><span class="r-main"><span class="r-t">添加一条</span><span class="r-s">${sub}</span></span></button></div>`;
     };
     return head + sec("user", "对你的了解", "称呼、偏好、习惯、家里有什么设备…") + sec("memory", "小芽的笔记", "环境、约定、踩过的坑");
@@ -1018,16 +1033,18 @@ function openMemEdit(t, k) {
   setTimeout(() => $("#memText").focus(), 60);
 }
 PAGES.xyskills = {
-  ctx: "xy", title: () => "技能",
+  ctx: "xy", title: () => "技能", sub: pg => pg.data ? `${pg.data.skills.filter(k => k.on).length} 个启用` : "小芽", solid: true,
   async load(pg) { try { pg.data = await hxq("skills"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
-    const head = xyHead("技能", "做某类事的现成步骤，小芽遇到对口的事会自己翻出来用；关掉的她就不用了（下一段新对话起生效）");
-    if (!pg.data) return head + LOADING;
+    if (!pg.data) return `<div class="v2-manage-note"><span>小芽的能力</span><span></span></div>` + LOADING;
+    const skills = pg.data.skills, on = skills.filter(k => k.on).length;
+    const head = `<div class="v2-skills-hero"><span>小芽的能力</span><h2>把常做的事<br>变成一句话</h2><p>开启后，小芽会在合适的时候自己用；也能在对话里直接点名。</p>
+      <div class="v2-mini-stats"><div><b>${skills.length}</b><span>个技能</span></div><div><b>${on}</b><span>个启用</span></div><div><b>${skills.length - on}</b><span>个关闭</span></div></div></div>`;
     const groups = {};
-    pg.data.skills.forEach(k => (groups[k.cat || "其他"] = groups[k.cat || "其他"] || []).push(k));
-    return head + Object.entries(groups).map(([cat, list]) => `<div class="sh-sec">${esc(cat)}</div><div class="group">` + list.map(k =>
-      `<div class="row sk-row"><button class="r-main" data-act="skview:${esc(k.name)}"><span class="r-t">${esc(k.name)}</span><span class="r-s sk-d">${esc(k.desc)}</span></button>` +
-      `<button class="sw${k.on ? " on" : ""}" data-act="sktog:${esc(k.name)}" aria-label="开关"><i></i></button></div>`).join("") + "</div>").join("");
+    skills.forEach(k => (groups[k.cat || "其他"] = groups[k.cat || "其他"] || []).push(k));
+    return head + Object.entries(groups).map(([cat, list]) => `<div class="v2-sec-head"><span><b>${esc(cat)}</b></span><span>${list.length} 个</span></div><div class="group">` + list.map(k =>
+      `<div class="row sk-row"><span class="r-ic">${ico("layers")}</span><button class="r-main" data-act="skview:${esc(k.name)}"><span class="r-t">${esc(k.name)}</span><span class="r-s sk-d">${esc(k.desc)}</span></button>` +
+      `<button class="sw${k.on ? " on" : ""}" data-act="sktog:${esc(k.name)}" aria-label="${k.on ? "关闭" : "启用"} ${esc(k.name)}"><i></i></button></div>`).join("") + "</div>").join("");
   },
 };
 // 技能文件（SKILL.md）开头是 YAML 元数据（---name / description …---）：拆出说明放在标题下，正文开头跟标题重复的一级标题也去掉
@@ -1042,7 +1059,7 @@ function skillDoc(src) {
   return { desc, body: body.replace(/^\s*#\s+[^\n]*\n/, "") };
 }
 PAGES.xyskill = {
-  ctx: "xy", title: pg => pg.p.name,
+  ctx: "xy", title: () => "技能", sub: pg => pg.p.name, solid: true,
   async load(pg) { try { pg.data = await hxq("skill_view", { name: pg.p.name }); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     if (!pg.data) return LOADING;
@@ -1065,7 +1082,7 @@ function cronZh(x) {                                 // Hermes 的定时规则�
 }
 const CRON_ST = { scheduled: "等着到点", active: "等着到点", paused: "已暂停", completed: "已完成", running: "正在跑", error: "出错了", failed: "出错了" };
 PAGES.xycron = {
-  ctx: "xy", title: () => "定时任务",
+  ctx: "xy", title: () => "定时任务", sub: pg => pg.data ? `${pg.data.jobs.filter(j => j.state !== "paused" && j.state !== "completed").length} 个启用` : "小芽", solid: true,
   async load(pg) {
     try {
       const [d, log] = await Promise.all([hxq("cron"), q("cron_log").catch(() => [])]);
@@ -1074,14 +1091,20 @@ PAGES.xycron = {
     } catch (e) { loadErr(pg, e); }
   },
   html(pg) {
-    const head = xyHead("定时任务", "到点小芽去办，手机上会弹系统通知（App 在后台、被关掉也会弹），内容也会留在小芽的对话里。要新建直接跟她说，比如「每天早上 8 点提醒我吃药」");
-    if (!pg.data) return head + LOADING;
-    const log = pg.data.log || [];
-    const jobs = pg.data.jobs.length ? `<div class="group">${pg.data.jobs.map((j, k) => `<button class="row" data-act="cronopen:${k}"><span class="r-ic">${ico("clock")}</span><span class="r-main">
-      <span class="r-t">${esc(j.name || j.prompt || j.id)}</span><span class="r-s"><span class="tag${j.state === "paused" || j.state === "completed" ? " gray" : ""}">${esc(CRON_ST[j.state] || j.state || "")}</span>${esc(cronZh(j.schedule))}` +
-      `${j.next ? " · 下次 " + esc(isoT(j.next)) : ""}</span>${j.last ? `<span class="r-s cron-last">${cronLastHtml(j)}</span>` : ""}</span><span class="chev">${ico("chev")}</span></button>`).join("")}</div>`
-      : emptyHtml("clock", "还没有定时任务", "跟小芽说「明天下午三点提醒我开会」试试");
-    return head + jobs + (log.length ? `<div class="sh-sec">最近送到的提醒</div><div class="group">${log.slice(0, 30).map(cronLogHtml).join("")}</div>` : "");
+    if (!pg.data) return `<div class="v2-manage-note"><span>到点小芽去办</span><span></span></div>` + LOADING;
+    const log = pg.data.log || [], jobs = pg.data.jobs;
+    const head = `<div class="v2-manage-note"><span>${jobs.length} 个任务</span><span>到点自动执行 · 完成会通知</span></div>`;
+    const list = jobs.length ? `<div class="v2-cron-list">${jobs.map((j, k) => {
+      const zh = cronZh(j.schedule), tm = zh.match(/(\d{1,2}:\d{2})/);
+      const big = tm ? tm[1] : zh, when = tm ? zh.replace(tm[1], "").trim() || "定时" : "按规则";
+      const paused = j.state === "paused" || j.state === "completed";
+      const canTog = !j.state || j.state === "scheduled" || j.state === "active" || j.state === "paused";
+      return `<div class="v2-cron-card"><button class="v2-cron-main" data-act="cronopen:${k}"><span class="v2-cron-when"><b class="${tm ? "" : "small"}">${esc(big)}</b><span>${esc(when)}</span></span>
+        <span class="v2-cron-info"><span class="v2-cron-title"><span class="tag${paused ? " gray" : ""}">${esc(CRON_ST[j.state] || j.state || "")}</span><b>${esc(j.name || j.prompt || j.id)}</b></span>
+        <span class="v2-cron-sub">${esc(cronZh(j.schedule))}${j.next ? " · 下次 " + esc(isoT(j.next)) : ""}</span>${j.last ? `<span class="v2-cron-sub">${cronLastHtml(j)}</span>` : ""}</span><span class="chev">${ico("chev")}</span></button>
+        ${canTog ? `<button class="sw${paused ? "" : " on"}" data-act="cron:${paused ? "resume" : "pause"}:${esc(j.id)}" aria-label="${paused ? "恢复" : "暂停"} ${esc(j.name || "定时任务")}"><i></i></button>` : ""}</div>`;
+    }).join("")}</div>` : emptyHtml("clock", "还没有定时任务", "跟小芽说「明天下午三点提醒我开会」试试");
+    return head + list + (log.length ? `<div class="v2-sec-head"><span><b>最近送到的提醒</b></span><span>${log.length} 条</span></div><div class="group">${log.slice(0, 30).map(cronLogHtml).join("")}</div>` : "");
   },
 };
 function cronLastHtml(j, bare) {                      // 上次跑的结果：成功 / 失败原因 / 送没送出去（失败的另起一行标红）
@@ -1113,14 +1136,15 @@ function openCron(k) {
     `<button class="btn danger wide" data-act="cron:remove:${esc(j.id)}">删除</button>`);
 }
 PAGES.xysess = {
-  ctx: "xy", title: () => "历史对话",
+  ctx: "xy", title: () => "历史对话", sub: () => "小芽", solid: true,
   async load(pg) { try { pg.data = await hxq("sessions", { q: pg.p.q || "" }); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
-    const head = xyHead("历史对话") + `<div class="search">${ico("search")}<input id="sessQ" placeholder="搜对话里说过的话" enterkeyhint="search" value="${esc(pg.p.q || "")}"></div>`;
+    const rows = pg.data && pg.data.sessions.filter(r => r.n || r.cur);
+    const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 段对话` : "最近使用"}</span><span>按最近使用排序</span></div>` +
+      `<div class="search">${ico("search")}<input id="sessQ" placeholder="搜对话里说过的话" enterkeyhint="search" value="${esc(pg.p.q || "")}"></div>`;
     if (!pg.data) return head + LOADING;
-    const rows = pg.data.sessions.filter(r => r.n || r.cur);
     if (!rows.length) return head + emptyHtml("layers", pg.p.q ? "没搜到" : "还没有对话", pg.p.q ? "换个说法试试" : "跟小芽说句话就有了");
-    return head + `<div class="group">${rows.map(r => `<button class="row${r.cur ? " cur" : ""}" data-act="sessopen:${esc(r.sid)}"><span class="r-main">
+    return head + `<div class="group">${rows.map(r => `<button class="row${r.cur ? " cur" : ""}" data-act="sessopen:${esc(r.sid)}"><span class="r-ic">${ico("spark")}</span><span class="r-main">
       <span class="r-t">${esc(r.title || r.snip || "（新对话）")}</span><span class="r-s">${r.cur ? '<span class="tag gray">当前</span>' : ""}${r.t ? reltime(r.t) : ""}${r.n ? ` · ${r.n} 条` : ""}</span>
       ${pg.p.q && r.snip ? `<span class="r-s snip">${esc(r.snip)}</span>` : ""}</span><span class="chev">${ico("chev")}</span></button>`).join("")}</div>`;
   },
@@ -1234,18 +1258,18 @@ function onClaudeEv(m) {
 }
 
 PAGES.csess = {
-  ctx: "claude", title: () => "历史会话",
+  ctx: "claude", title: () => "历史会话", sub: () => "Claude", solid: true,
+  right: () => `<button class="nav-btn" data-act="cnew:back" aria-label="新建会话">${ico("compose")}</button>`,
   async load(pg) { try { pg.data = await q("c_sessions"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const rows = pg.data;
-    const head = `<header class="hero"><div class="over">Claude</div><h1>历史会话</h1></header>
-      <button class="new-btn" data-act="cnew:back">${ico("compose")}<span>新建会话</span></button>`;
+    const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 个会话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
     if (!rows) return head + LOADING;
     if (!rows.length) return head + emptyHtml("layers", "还没有会话", "发一句话就会开一个新会话");
     return head + `<div class="group">${rows.map(r => {
       const tags = (r.busy ? '<span class="tag"><span class="spin xs"></span>进行中</span>' : r.unread ? '<span class="tag">新回复</span>' : "") +
         (r.cur ? '<span class="tag gray">当前</span>' : "");
-      return `<button class="row${r.cur ? " cur" : ""}" data-act="csw:${r.sid}"><span class="r-main"><span class="r-t">${esc(r.title)}</span>
+      return `<button class="row${r.cur ? " cur" : ""}" data-act="csw:${r.sid}"><span class="r-ic">${ico("spark")}</span><span class="r-main"><span class="r-t">${esc(r.title)}</span>
         <span class="r-s">${tags}${reltime(r.t)}${r.model !== "Claude" ? " · " + esc(r.model) : ""}</span></span>
         <span class="${r.cur ? "check" : "chev"}">${ico(r.cur ? "check" : "chev")}</span></button>`;
     }).join("")}</div>`;
@@ -1254,15 +1278,17 @@ PAGES.csess = {
 
 // ---------------------------------------------------------------- 更新记录：这个软件每次更新的 git 提交 + 现在的版本 + 怎么更新（2026-10-19）
 PAGES.uplog = {
-  title: () => "更新记录",
+  ctx: "xy", title: () => "更新记录", solid: true,
   async load(pg) { try { pg.data = await q("uplog"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const d = pg.data;
-    const head = `<header class="hero"><div class="over">EspLink</div><h1>更新记录</h1>${d ? `<div class="sub">服务器代码 ${esc(d.head)} · 界面 ${esc(window.UI_VER || "开发版")}（${esc(window.UI_FROM || "内置")}）· 安装包 v${window.SHELL_V || 1}${Link ? "" : "（没有原生模块）"}</div>` : ""}</header>`;
+    const cur = esc(window.UI_VER || "开发版");
+    const head = `<div class="v2-version-card"><span>当前界面</span><b>${cur}</b><p>${esc(window.UI_FROM || "内置")} · 安装包 v${window.SHELL_V || 1}${Link ? "" : " · 没有原生模块"}</p></div>`;
     if (!d) return head + LOADING;
     if (!d.log.length) return head + emptyHtml("layers", "看不到提交记录", "服务器上没有 git 历史");
-    return head + `<div class="meta" style="margin-top:0">界面是连上服务器自动热更新的（提交了才下发）；要装新安装包（改了原生部分）时，苹果在 SideStore 软件源里刷新、安卓用电脑 adb 装；服务器和固件的更新是助手改完代码重启 / OTA 下发。下面的每条就是这个软件的一次更新：</div>
-      <div class="group">${d.log.map(r => `<div class="row"><span class="r-main"><span class="r-t">${esc(r.s)}</span><span class="r-s">${esc(r.t)} · ${esc(r.h)}</span></span></div>`).join("")}</div>`;
+    return head + `<div class="v2-manage-note"><span>服务器代码 ${esc(d.head)}</span><span>提交后才下发</span></div>` +
+      `<div class="v2-sec-head"><span><b>最近更新</b><em>界面连上服务器会自动换成已提交的新版本</em></span><span>${d.log.length} 条</span></div>` +
+      `<div class="group">${d.log.map(r => `<div class="row"><span class="r-ic">${ico("layers")}</span><span class="r-main"><span class="r-t">${esc(r.s)}</span><span class="r-s">${esc(r.t)} · ${esc(r.h)}</span></span></div>`).join("")}</div>`;
   },
 };
 
@@ -1356,18 +1382,18 @@ function ocKeep(old, d) {                            // 同 cKeepOlder：接回�
 function makeOcSessions(k) {
   const E = OC[k];
   return {
-    ctx: "oc", title: () => "历史会话",
+    ctx: "oc", title: () => "历史会话", sub: () => E.over, solid: true,
+    right: () => `<button class="nav-btn" data-act="onew:back" aria-label="新建会话">${ico("compose")}</button>`,
     async load(pg) { try { pg.data = await q(E.p + "_sessions"); draw(pg); } catch (e) { loadErr(pg, e); } },
     html(pg) {
       const rows = pg.data;
-      const head = `<header class="hero"><div class="over">${esc(E.over)}</div><h1>历史会话</h1></header>
-        <button class="new-btn" data-act="onew:back">${ico("compose")}<span>新建会话</span></button>`;
+      const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 个会话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
       if (!rows) return head + LOADING;
       if (!rows.length) return head + emptyHtml("layers", "还没有会话", "发一句话就会开一个新会话");
       return head + `<div class="group">${rows.map(r => {
         const tags = (r.busy ? '<span class="tag"><span class="spin xs"></span>进行中</span>' : r.unread ? '<span class="tag">新回复</span>' : "") +
           (r.cur ? '<span class="tag gray">当前</span>' : "");
-        return `<button class="row${r.cur ? " cur" : ""}" data-act="osw:${r.sid}"><span class="r-main"><span class="r-t">${esc(r.title)}</span>
+        return `<button class="row${r.cur ? " cur" : ""}" data-act="osw:${r.sid}"><span class="r-ic">${ico(k === "oc" || k === "ocb" ? "code" : "layers")}</span><span class="r-main"><span class="r-t">${esc(r.title)}</span>
           <span class="r-s">${tags}${reltime(r.t)}${r.model ? " · " + esc(r.model) : ""}</span></span>
           <span class="${r.cur ? "check" : "chev"}">${ico(r.cur ? "check" : "chev")}</span></button>`;
       }).join("")}</div>`;
@@ -1440,13 +1466,14 @@ function onXzEv(m) {
   homeDirty();
 }
 PAGES.xzconv = {
-  ctx: "xz", title: () => "历史对话",
+  ctx: "xz", title: () => "历史对话", sub: () => "小智", solid: true,
+  right: () => `<button class="nav-btn" data-act="xznew:back" aria-label="新对话">${ico("compose")}</button>`,
   async load(pg) { try { pg.data = await q("xz_convs"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
-    const head = `<header class="hero"><div class="over">小智</div><h1>历史对话</h1></header>
-      <button class="new-btn" data-act="xznew:back">${ico("compose")}<span>新对话</span></button>`;
+    const head = `<div class="v2-sess-note"><span>${pg.data ? `${pg.data.length} 段对话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
     if (!pg.data) return head + LOADING;
-    return head + `<div class="group">${pg.data.map(c => `<button class="row${c.cur ? " cur" : ""}" data-act="xzsw:${c.id}"><span class="r-main">
+    if (!pg.data.length) return head + emptyHtml("chat", "还没有对话", "和小智说句话就会开一段新对话");
+    return head + `<div class="group">${pg.data.map(c => `<button class="row${c.cur ? " cur" : ""}" data-act="xzsw:${c.id}"><span class="r-ic">${ico("chat")}</span><span class="r-main">
       <span class="r-t">${esc(c.n ? c.title : "（空对话）")}</span><span class="r-s">${c.cur ? '<span class="tag gray">当前</span>' : ""}${reltime(c.t)} · ${Math.ceil(c.n / 2)} 轮</span></span>
       <span class="${c.cur ? "check" : "chev"}">${ico(c.cur ? "check" : "chev")}</span></button>`).join("")}</div>`;
   },
@@ -1454,27 +1481,33 @@ PAGES.xzconv = {
 
 // ---------------------------------------------------------------- AI 日报
 PAGES.news = {
-  ctx: "news", title: () => "AI 日报",
+  ctx: "news", title: () => "日报", solid: true,
+  right: () => `<button class="nav-btn" data-act="reload" aria-label="刷新日报">${ico("repeat")}</button>`,
   async load(pg) { try { pg.data = await q("news"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const d = pg.data;
     const date = d && d.date ? `${+d.date.slice(5, 7)}月${+d.date.slice(8, 10)}日` : "";
-    const head = `<header class="hero"><div class="over">${date}</div><h1>AI 日报</h1>${d ? `<div class="sub">${d.items.length} 条</div>` : ""}</header>`;
+    const head = `<div class="news-v2-date">今天${date ? ` · ${date}` : ""}${d ? ` · 已生成 ${d.items.length} 条` : ""}</div>`;
     if (!d) return head + LOADING;
-    return head + `<button class="play-all" data-act="nplay:0"><span class="pa-ic">${ico("play")}</span><span><b>播放全部</b><span>从第一条连续念</span></span></button>` +
-      (d.last ? `<button class="play-all" style="background:var(--elev);color:var(--text);box-shadow:var(--shadow)" data-act="nresume"><span class="pa-ic" style="background:var(--cs);color:var(--c)">${ico("repeat")}</span><span><b>接着听</b><span>上次听到第 ${d.last} 条</span></span></button>` : "") +
-      `<div class="group">${d.items.map(([sec, t], k) => `<button class="row news-row${d.last === k + 1 ? " last" : ""}" data-act="nitem:${k}"><span class="num">${k + 1}</span>
-        <span class="r-main"><span class="r-t">${esc(t)}</span><span class="r-s">${esc(sec)}</span></span><span class="chev">${ico("chev")}</span></button>`).join("")}</div>`;
+    if (!d.items.length) return head + emptyHtml("news", "今天还没有日报", "有新消息时会生成在这里");
+    const play = `<div class="news-v2-actions"><button class="news-v2-play" data-act="nplay:0"><span class="nv-ic">${ico("play")}</span><span>播放全部</span></button>` +
+      (d.last ? `<button class="news-v2-play ghost" data-act="nresume"><span class="nv-ic">${ico("repeat")}</span><span>接着听 · 第 ${d.last} 条</span></button>` : "") + "</div>";
+    return head + play + `<div class="news-v2-list">${d.items.map(([sec, t, src], k) => `<button class="news-v2-card${d.last === k + 1 ? " last" : ""}" data-act="nitem:${k}">
+      <span class="news-v2-top"><span class="news-v2-sec"><i></i>${esc(sec)}</span>${d.last === k + 1 ? '<span class="news-v2-last">上次听到这里</span>' : ""}</span>
+      <span class="news-v2-title">${esc(t)}</span>
+      ${src ? `<span class="news-v2-meta">${esc(src)}</span>` : ""}</button>`).join("")}</div>` +
+      `<div class="news-v2-end">今日 ${d.items.length} 条</div>`;
   },
 };
 PAGES.newsItem = {
-  ctx: "news", bar: "acts", title: pg => pg.data ? `第 ${pg.p.k + 1} 条` : "日报",
+  ctx: "news", bar: "acts", title: pg => pg.data ? `第 ${pg.p.k + 1} 条` : "日报", solid: true,
+  right: pg => `<button class="nav-btn" data-act="nsay:${pg.p.k}" aria-label="只念这条">${ico("speak")}</button>`,
   acts: pg => [{ label: "从这条连播", icon: "play", cls: "primary", act: "nplay:" + pg.p.k }, { label: "只念这条", icon: "speak", act: "nsay:" + pg.p.k }],
   async load(pg) { try { pg.data = await q("news_item", { k: pg.p.k }); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const d = pg.data;
     if (!d) return LOADING;
-    return `<header class="hero"><div class="over">${esc(d.sec)} · ${pg.p.k + 1}</div></header><article class="article"><h1>${esc(d.title)}</h1>
+    return `<div class="v2-article-meta"><span>${esc(d.sec)} · ${pg.p.k + 1}</span></div><article class="article"><h1>${esc(d.title)}</h1>
       <div class="prose">${esc(d.d || "")}</div>${d.src ? `<div class="source">${ico("link")}${esc(d.src)}</div>` : ""}</article>`;
   },
 };
@@ -1516,11 +1549,11 @@ async function plugRun(pg, act) {
   pg.busy = false; draw(pg);
 }
 PAGES.plug = {
-  ctx: "plg", title: () => "插座",
+  ctx: "plg", title: () => "插座", sub: () => "BroadLink · 家里", solid: true,
   load(pg) { pg.stick = false; return plugRun(pg, "state"); },   // 页面默认贴底（对话页要）：这页从上往下读，不然一进来就被滚到资料最底下
 
-  html(pg) { return `<header class="hero"><div class="over">物联网 DIY</div><h1>Wi-Fi智能插座1</h1><div class="sub">BroadLink SP mini 3 · 走博联云端</div></header>` +
-    plugCard(pg) + `<article class="article"><div class="bub md sk-md">${md(PLUG_DOC)}</div></article>`; },
+  html(pg) { return `<div class="v2-manage-note"><span>Wi-Fi智能插座1 · 客厅</span><span>博联云端</span></div>` +
+    plugCard(pg) + `<article class="article v2-doc-card"><div class="bub md sk-md">${md(PLUG_DOC)}</div></article>`; },
 };
 
 // ---------------------------------------------------------------- 文件页（2026-10-26）：看硅谷服务器整盘的文件，只读
@@ -1644,7 +1677,7 @@ async function fsDuRun(pg) {
   draw(pg);
 }
 PAGES.files = {
-  ctx: "fs", title: pg => fsName(fsPath(pg)),
+  ctx: "fs", title: () => "文件", sub: () => "硅谷服务器 · 只读", solid: true,
   right: () => `<button class="nav-btn" data-act="reload" aria-label="刷新">${ico("repeat")}</button>`,
   async load(pg) {
     pg.stick = false; pg.data = null; pg.du = null;
@@ -1660,7 +1693,7 @@ PAGES.files = {
     const L = fsSorted(pg), bad = !!(pg.du && pg.du.err);
     const sub = pg.du === "busy" ? "正在量各项占了多少盘…" : bad ? pg.du.err : `${d.items.length} 项` + (pg.du && pg.du.items ? ` · 合计 ${fsize(pg.du.total)}` : "");
     const chip = (k, t) => `<button class="fs-chip${fsSort === k ? " on" : ""}" data-act="fssort:${k}">${t}${k === "size" && pg.du === "busy" ? '<span class="spin"></span>' : ""}</button>`;
-    return `<header class="hero"><div class="over">硅谷服务器</div><h1>${esc(fsName(path))}</h1><div class="sub${bad ? " bad" : ""}">${esc(sub)}</div></header>` +
+    return `<div class="v2-manage-note${bad ? " bad" : ""}"><span>${esc(sub)}</span><span>只读</span></div>` +
       fsCrumbs(path) + fsFavBar(path) + `<div class="fs-bar">${chip("name", "名称")}${chip("size", "大小")}${chip("time", "时间")}</div>` +
       (L.length ? `<div class="group">${L.slice(0, FS_LIST_MAX).map(it => fsRow(pg, path, it)).join("")}</div>` +
         (L.length > FS_LIST_MAX ? `<div class="fs-note">还有 ${L.length - FS_LIST_MAX} 项没列出</div>` : "") : emptyHtml("folder", "空目录", ""));
@@ -1922,7 +1955,7 @@ function fvFit(pg) {                                       // HTML 预览按电�
 }
 const fvSubText = pg => [pg.p.size ? fsize(pg.p.size) : "", pg.p.mtime ? fsTime(pg.p.mtime) : "", pg.d && pg.d.pages ? pg.d.pages + (pg.d.kind === "pptx" ? " 张" : " 页") : ""].filter(Boolean).join(" · ");
 PAGES.fileView = {
-  ctx: "fs", bar: "acts", title: pg => fvName(pg.p),
+  ctx: "fs", bar: "acts", title: pg => fvName(pg.p), sub: pg => fvSubText(pg), solid: true,
   acts: pg => {
     const d = pg.d || {}, a = [];
     if (d.kind === "pdf" || d.kind === "office" || d.kind === "docx" || d.kind === "pptx") a.push({ label: "", icon: "minus", cls: "mini", act: "fvzoom:-" }, { label: "", icon: "plus", cls: "mini", act: "fvzoom:+" });
@@ -1949,8 +1982,7 @@ PAGES.fileView = {
   },
   html(pg) {
     const d = pg.d, p = pg.p, name = fvName(p), src = fvSrc(p);
-    const head = `<header class="hero"><div class="over">${esc(p.path ? fsDir(p.path) : "对话里的文件")}</div><h1>${esc(name)}</h1>` +
-      `<div class="sub">${esc(fvSubText(pg))}</div></header>`;
+    const head = "";
     if (!d) return head + LOADING;
     if (d.kind === "html" && d.mode !== "src")
       return `<div class="sys-wait">${LOADING}</div><div class="sys-box fv"><iframe class="sys-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" src="${esc(src)}" onload="this.classList.add('on')"></iframe>` +
@@ -1980,21 +2012,21 @@ PAGES.fileView = {
 // 清单（名字、起始路径、分组）由服务器 op sys 给，加系统只改 server.py 的 SYS_LIST。出错一律就地一行字，不弹框。
 const sysUrl = p => `http://${host()}/app/s/${encodeURIComponent(cfg.token)}/${p.mount}${p.path}`;
 PAGES.systems = {
-  ctx: "sys", title: () => "系统",
+  ctx: "sys", title: () => "系统", sub: () => "硅谷服务器", solid: true,
   right: () => `<button class="nav-btn" data-act="reload" aria-label="刷新">${ico("repeat")}</button>`,
   async load(pg) { pg.stick = false; try { pg.data = await q("sys"); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const L = pg.data && pg.data.list;
     if (!L) return LOADING;
     const up = L.filter(x => x.up).length;
-    return `<header class="hero"><div class="over">硅谷服务器</div><h1>系统</h1><div class="sub">${up === L.length ? `${L.length} 个都在运行` : `${up} / ${L.length} 个在运行`} · 点开直接在 App 里用</div></header>` +
+    return `<div class="v2-manage-note"><span>${up === L.length ? `${L.length} 个都在运行` : `${up} / ${L.length} 个在运行`}</span><span>点开直接在 App 里用</span></div>` +
       [...new Set(L.map(x => x.group))].map(g => `<div class="sys-g">${esc(g)}</div><div class="group">` + L.map((x, i) => x.group !== g ? "" :
-        `<button class="row" data-act="sysgo:${i}"><span class="r-main"><span class="r-t">${esc(x.name)}</span>` +
+        `<button class="row" data-act="sysgo:${i}"><span class="r-ic">${ico("layers")}</span><span class="r-main"><span class="r-t">${esc(x.name)}</span>` +
         `<span class="r-s">${x.up ? "" : '<b class="bad">没在运行</b> · '}${esc(x.desc)}</span></span><span class="sys-st${x.up ? "" : " down"}"></span><span class="chev">${ico("chev")}</span></button>`).join("") + "</div>").join("");
   },
 };
 PAGES.sysView = {
-  ctx: "sys", title: pg => pg.p.name,
+  ctx: "sys", title: pg => pg.p.name, solid: true,
   right: () => `<button class="nav-btn" data-act="reload" aria-label="刷新">${ico("repeat")}</button><button class="nav-btn" data-act="sysout" aria-label="用浏览器打开">${ico("globe")}</button>`,
   load(pg) {
     pg.stick = false; draw(pg); sysFit(pg);
@@ -2057,6 +2089,13 @@ const ACT = {
   go: k => go(k),
   settings: () => openSettings(),
   login: () => doLogin(),
+  lgpw: () => {
+    const p = $("#lgPw"), b = $("#lgPwToggle"), show = p.type === "password";
+    p.type = show ? "text" : "password";
+    b.innerHTML = ico(show ? "eyeOff" : "eye");
+    b.setAttribute("aria-label", show ? "隐藏密码" : "显示密码");
+    b.setAttribute("aria-pressed", String(show));
+  },
   lgsrv: () => { const b = $("#lgSrvBox"); b.hidden = !b.hidden; },
   async logout() {
     try { await q("logout"); } catch (e) { /* 没连上也照样退 */ }
@@ -2918,6 +2957,7 @@ async function popDo(k) {
 let sheetKind = null;
 function openSheet(kind, html) {
   sheetKind = kind;
+  $("#sheet").dataset.kind = kind || "";
   $("#sheetBody").innerHTML = html;
   $("#sheet").classList.add("on");
   $("#scrim").classList.add("on");
@@ -2925,6 +2965,7 @@ function openSheet(kind, html) {
 function closeSheet() {
   sheetKind = null;
   $("#sheet").classList.remove("on");
+  $("#sheet").dataset.kind = "";
   $("#scrim").classList.remove("on");
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest("#sheet")) document.activeElement.blur();
 }
@@ -4105,6 +4146,31 @@ window.addEventListener("resize", () => { if (!fl.hidden) flPlace(); });
 // 结果通知（服务器发给这台的 note）由原生模块在 App 不在前台时弹；在前台就由 onNote 在悬浮球上报
 const cBusy = new Set();                             // 正在干活的 Claude 会话
 let bgLast = "";
+let pendingNoteTarget = null;
+function noteTarget(t) {
+  if (!t || !(t.route || t.k || t.sid)) return;
+  pendingNoteTarget = t;
+  applyNoteTarget();
+}
+async function applyNoteTarget() {
+  const t = pendingNoteTarget;
+  if (!t || !online || !curPage()) return;
+  pendingNoteTarget = null;
+  const route = String(t.route || (t.k === "cron" ? "xycron" : t.k || ""));
+  const sid = String(t.sid || "");
+  if (route === "home" || route === "xy") return goSection("home");
+  if (route === "xz") return goSection("xz");
+  if (route === "xycron") { goSection("home"); return go("xycron"); }
+  if (!PAGES[route]) return;
+  goSection(route);
+  if (!sid) return;
+  if (route === "claude") return ACT.csw(sid);
+  if (["oc", "ocb", "cbi", "cbc"].includes(route)) return ACT.osw(sid);
+}
+if (Link) {
+  Link.addListener("target", noteTarget);
+  if (Link.takeTarget) Link.takeTarget().then(noteTarget).catch(() => {});
+}
 function bgSync() {
   if (!Link) return;
   const o = { keep: bgOn, notify: noteOn, call: call.on, busy: cBusy.size > 0 || oBusy.size > 0 };
@@ -4181,6 +4247,7 @@ async function doLogin() {
 $("#lgPw").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); doLogin(); } });
 $("#lgUser").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("#lgPw").focus(); } });
 $("#login .lg-orb").innerHTML = LOGO;
+$("#lgPwToggle").innerHTML = ico("eye");
 
 // iOS 键盘：安装包 v3 带 @capacitor/keyboard（resize: native，整个网页让出键盘那块，跟安卓一样），顺手去掉键盘上面那条「上一项 / 下一项 / 完成」
 if (Kbd && PLATFORM === "ios") { try { Kbd.setAccessoryBarVisible({ isVisible: false }).catch(() => {}); } catch (e) { /* 没有 */ } }
