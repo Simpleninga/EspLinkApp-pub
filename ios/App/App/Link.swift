@@ -658,7 +658,9 @@ final class LinkEngine: NSObject {
     private var playWired = false
     private var micEng: AVAudioEngine?
 
-    private static let sessionOpts: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .mixWithOthers]
+    // 不带 .allowBluetooth：它是蓝牙「通话」(HFP) 开关，playAndRecord 一激活耳机就切到通话模式——音质变糊、音量跳到通话那一档特别大声
+    // （2026-11-04 用户：戴着耳机给小芽发消息，耳机声音变大又难听，关掉小芽就好）。只留 A2DP：耳机照常高音质放音，收音用手机自己的麦克风
+    private static let sessionOpts: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP, .mixWithOthers]
 
     private func audioSession() {
         let s = AVAudioSession.sharedInstance()

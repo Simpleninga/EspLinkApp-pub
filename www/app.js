@@ -4168,7 +4168,7 @@ async function applyNoteTarget() {
   if (["oc", "ocb", "cbi", "cbc"].includes(route)) return ACT.osw(sid);
 }
 if (Link) {
-  Link.addListener("target", noteTarget);
+  Link.addListener("target", t => { noteTarget(t); if (Link.takeTarget) Link.takeTarget().catch(() => {}); });   // 原生热启动时存了一份又推了一份：这里取走，免得界面重载时又跳回旧通知
   if (Link.takeTarget) Link.takeTarget().then(noteTarget).catch(() => {});
 }
 function bgSync() {
