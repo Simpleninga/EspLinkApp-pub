@@ -35,7 +35,14 @@ const DEV_ID = (() => {                              // 每台手机一个设备
   if (!id) { id = PLATFORM + "-" + Math.random().toString(36).slice(2, 8); try { localStorage.setItem("devId", id); } catch (e) { /* 没有存储 */ } }
   return id;
 })();
-const DEV_LABEL = PLATFORM === "ios" ? "iPhone" : PLATFORM === "android" ? "安卓" : "浏览器";
+const DEV_BIG = Math.min(screen.width || 0, screen.height || 0) >= 600;      // 平板（手机最短边 <600）
+const DEV_LABEL = PLATFORM === "ios" ? (DEV_BIG ? "iPad" : "iPhone") : PLATFORM === "android" ? (DEV_BIG ? "安卓平板" : "安卓")
+  : /Electron/.test(navigator.userAgent) ? (/Windows/.test(navigator.userAgent) ? "Windows 电脑" : "电脑") : "浏览器";
+// 大屏 / 电脑版（2026-11-12，用户：平板和 Windows 版要跟手机一样的功能）：一份界面代码、四个壳，宽屏时换排版——侧栏常驻在左边、
+// 内容居中限宽、底部弹层变居中对话框、鼠标右键 / 悬停 / 快捷键 / 粘贴拖拽。🔴 手机（含手机横屏：高度 <540）一律不进这个模式，样式全挂在 body.wide 下
+const WIDE_MQ = matchMedia("(min-width: 720px) and (min-height: 540px)");
+const FINE_MQ = matchMedia("(hover: hover) and (pointer: fine)");           // 有鼠标 / 触控板（电脑；iPad 外接键盘鼠标时也算）
+let WIDE = WIDE_MQ.matches, dwKey = "";
 function saveCfg() { try { localStorage.setItem("cfg", JSON.stringify({ servers: cfg.servers, token: cfg.token, user: cfg.user })); } catch (e) { /* 没有存储 */ } }
 const HOSTS = {};       // 线路名对照（手填了别的地址就显示地址本身）
 const EASE = "cubic-bezier(.32,.72,0,1)";
@@ -43,6 +50,7 @@ function store(k, v) { try { if (v === undefined) return localStorage.getItem(k)
 
 // 原生插件（@capacitor/app 管安卓返回键，@capacitor/haptics 管震动）：没装 / 在浏览器里跑就当没有
 function plug(name) {
+  if (window.xyDesk && window.xyDesk.plug && window.xyDesk.plug[name]) return window.xyDesk.plug[name];     // 电脑版（Electron 壳，desktop/）：内置浏览器等由壳实现，调用跟手机插件同一套
   try {
     if (!CAP || !CAP.isNativePlatform || !CAP.isNativePlatform() || !CAP.isPluginAvailable(name)) return null;
     return CAP.registerPlugin(name);
@@ -81,6 +89,7 @@ const ICONS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>',
   check: '<path d="M5.5 12.5l4 4L18.5 7.5"/>',
   x: '<path d="M7 7l10 10M17 7L7 17"/>',
+  textSel: '<path d="M9 4.5c1.6 0 3 .6 3 2v11c0 1.4-1.4 2-3 2M15 4.5c-1.6 0-3 .6-3 2v11c0 1.4 1.4 2 3 2M9.5 12h5"/>',
   speak: '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.2 6.5a7.8 7.8 0 0 1 0 11"/>',
   speakOff: '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
@@ -108,6 +117,8 @@ const ICONS = {
   menu: '<path d="M4.5 7h15M4.5 12h15M4.5 17h9"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   book: '<path d="M5 4.5h9.5a3 3 0 0 1 3 3V19.5H8a3 3 0 0 1-3-3z"/><path d="M5 16.5a3 3 0 0 1 3-3h9.5M9 8h5"/>',
+  compass: '<circle cx="12" cy="12" r="8.5"/><path d="M15.6 8.4l-2.1 5.1-5.1 2.1 2.1-5.1z"/>',
+  bookmark: '<path d="M7 4.5h10a1 1 0 0 1 1 1v14l-6-3.8-6 3.8v-14a1 1 0 0 1 1-1z"/>',
   star: '<path d="M12 4.3l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   starOn: '<path d="M12 4.3l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/>',
   repeat: '<path d="M17 4.5l2.5 2.5L17 9.5"/><path d="M19.5 7H8a3.5 3.5 0 0 0-3.5 3.5v1M7 19.5L4.5 17 7 14.5"/><path d="M4.5 17H16a3.5 3.5 0 0 0 3.5-3.5v-1"/>',
@@ -296,7 +307,7 @@ function connect() {
     if (linkStarted) return;
     linkStarted = true;
     status("正在连接");
-    Link.start({ servers: cfg.servers.join(","), token: cfg.token, hello: JSON.stringify(helloMsg()) }).catch(e => { linkStarted = false; status(e.message || "原生模块出错"); });
+    Link.start({ servers: cfg.servers.join(","), token: cfg.token, hello: JSON.stringify(helloMsg()) }).catch(e => { linkStarted = false; status(e.message || "连接出错了"); });
     return;
   }
   if (ws) return;
@@ -330,6 +341,11 @@ function onDown() {
   pttEnd(true);
   live = null;                       // 服务器那头的常开收音跟着连接没了；通话还算开着，连回来自动接上
   if (!Link) spStop(false);
+  for (const to in pends) {
+    const n = pends[to].length;
+    pends[to] = pends[to].filter(p => p.st !== "asr");
+    if (pends[to].length !== n) redrawThread(to);
+  }
   status("连接断开，正在重连");
 }
 function hostName(h) { return HOSTS[String(h).split(":")[0]] || h; }
@@ -379,7 +395,7 @@ let srvName = "";
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { connect(); if (online) liveStart(); return; }
   pttEnd(true);
-  if (Link && bgOn) return;
+  if ((Link || window.xyDesk) && bgOn) return;
   liveStop(0);
   closeMic();
 });
@@ -477,7 +493,7 @@ async function checkUi() {
   } catch (e) { /* 拉不到就用现在这版 */ }
 }
 setInterval(() => {
-  if (!uiReload || ptt || pttHeld || call.on || speaking() || sheetKind || document.activeElement && document.activeElement.tagName === "TEXTAREA") return;
+  if (!uiReload || ptt || pttHeld || call.on || speaking() || sheetKind || document.activeElement && /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName)) return;
   uiReload = false;
   location.reload();
 }, 500);
@@ -521,14 +537,16 @@ function hint(text, near) {
   hintTm = setTimeout(() => { hintEl.classList.remove("on"); hintEl.remove(); barSize(); }, 3500 + Math.min(4000, text.length * 80));
 }
 // 页面数据拉不到：还没有数据就把转圈换成「重试」；有旧数据就留着旧的，底下说一声
+const errHtml = msg => `<div class="empty"><div class="e-ic">${ico("x")}</div><b>没加载出来</b><span>${esc(msg)}</span><button class="btn" data-act="reload">重试</button></div>`;
 function loadErr(pg, e) {
   if (pg.data) { hint(e.message); return; }
-  pg.el.innerHTML = `<div class="empty"><div class="e-ic">${ico("x")}</div><b>没加载出来</b><span>${esc(e.message)}</span><button class="btn" data-act="reload">重试</button></div>`;
+  pg.el.innerHTML = errHtml(e.message);
 }
+function zhErr(s, dft) { return s && /[一-龥]/.test(s) ? s : dft; }
 
 // ---------------------------------------------------------------- 页面栈（全在本地）
 const PAGES = {};
-const V2_SESS = new Set(["csess", "ocsess", "ocbsess", "cbisess", "cbcsess", "xzconv", "xysess"]);
+const V2_SESS = new Set(["csess", "ocsess", "ocbsess", "cbisess", "cbcsess", "xzconv", "xysess", "dclist", "dchist"]);
 const V2_MANAGE = new Set(["xymem", "xyskills", "xyskill", "xycron", "uplog", "plug", "files", "systems"]);
 const stack = [];
 const stage = $("#stage");
@@ -554,7 +572,7 @@ function go(key, p, opt) {
   draw(pg);
   chrome(pg);
   if (old) slide(old.el, pg.el, 1, 0, () => {
-    if (opt && opt.replace && old !== stack[0]) { const i = stack.indexOf(old); if (i > 0) stack.splice(i, 1); old.el.remove(); }
+    if (opt && opt.replace && old !== stack[0]) { const i = stack.indexOf(old); if (i > 0) stack.splice(i, 1); disposePage(old); }
     else old.el.classList.add("off");
   });
   if (pg.def.load) pg.def.load(pg);
@@ -565,12 +583,12 @@ function goSection(key, p) {
   closeDrawer();
   const cur = curPage();
   if (key === "claude") {
-    while (stack.length > 2) stack.splice(1, 1)[0].el.remove();
+    while (stack.length > 2) disposePage(stack.splice(1, 1)[0]);
     if (stack.length === 2) popPage();
     return;
   }
   if (cur && cur.sec && cur.key === key && stack.length === 2) return;
-  while (stack.length > 2) stack.splice(1, 1)[0].el.remove();
+  while (stack.length > 2) disposePage(stack.splice(1, 1)[0]);
   go(key, p, { sec: true, replace: true });
 }
 // 返回：一级页上 = 划出侧栏（高亮当前这项），其余 = 回上一层
@@ -579,20 +597,25 @@ function back() {
   const cur = curPage();
   if (cur.def.onBack && cur.def.onBack(cur)) return true;          // 页面自己先处理（浏览器：先收起标签总览 / 联想）
   if (cur.sec) {
+    if (WIDE) { goSection("claude"); return true; }                  // 宽屏侧栏一直在：一级页上「返回」= 回 Claude（安卓平板的返回键）
     if (!dwOn) { hap("light"); openDrawer(); }
     return true;
   }
   return popPage();
 }
+function leavePage(p) {
+  if (p.pdf || p.pv) fvFree(p);
+  if (p.def.onLeave) p.def.onLeave(p);
+}
+function disposePage(p) { leavePage(p); p.el.remove(); }
 function popPage() {
   if (stack.length < 2) return false;
   closeSheet(); closePop();
   settle();
   const old = stack.pop(), pg = curPage();
-  if (old.pdf || old.pv) fvFree(old);
-  if (old.def.onLeave) old.def.onLeave(old);
   pg.el.classList.remove("off");
   chrome(pg);
+  leavePage(old);
   slide(old.el, pg.el, -1, 0, () => old.el.remove());
   if (pg.def.onShow) pg.def.onShow(pg);
   return true;
@@ -637,6 +660,13 @@ function draw(pg) {
   updConn();
   tickTimers();
 }
+function drawSoon(pg) {                              // 流式事件很密：同一个页面 120ms 内只重画一次
+  if (!pg || pg.drawT) return;
+  pg.drawT = setTimeout(() => {
+    pg.drawT = 0;
+    if (stack.includes(pg)) draw(pg);
+  }, 120);
+}
 function chrome(pg) {
   const d = pg.def, b = document.body;
   b.dataset.ctx = d.ctx || "";
@@ -653,7 +683,9 @@ function chrome(pg) {
   if (!d.midAct) delete $("#navMid").dataset.act;
   $("#navRight").innerHTML = navRightHtml(pg);
   setBar(pg);
+  if (WIDE && dwKey !== secKey()) { dwKey = secKey(); drawerUpd(); }       // 侧栏常驻：当前一级页换了就更新高亮
 }
+if (window.ResizeObserver) new ResizeObserver(() => $("#nav").style.setProperty("--nav-r", $("#navRight").offsetWidth + "px")).observe($("#navRight"));
 // 顶栏右边：在念（没在通话）时最前面多一个「停止」，原来的按钮（自动朗读开关等）都不动
 function navRightHtml(pg) {
   const r = pg.def.right ? pg.def.right(pg) : "";
@@ -669,29 +701,39 @@ function stickBottom(pg) { if (pg && pg.stick) pg.el.scrollTop = pg.el.scrollHei
 // 底栏：输入栏 / 呼叫小芽 / 操作按钮
 const bar = $("#bar");
 function setBar(pg) {
-  const kind = pg.def.bar || "";
+  let kind = pg.def.bar || "";
+  const acts = kind === "acts" ? (pg.def.acts(pg) || []) : null;
+  if (kind === "acts" && !acts.length) kind = "";
   if (kind === "composer") {
     if (cmpMain.el.parentNode !== bar) { bar.innerHTML = ""; bar.appendChild(cmpMain.el); }
-    cmpMain.setTo(pg.def.to);
+    cmpMain.setTo(pg.def.to, pg.def.sid ? pg.def.sid(pg) : "");
   } else if (kind === "call") {
     bar.innerHTML = callBtnHtml();
   } else if (kind === "acts") {
-    bar.innerHTML = `<div class="acts">${(pg.def.acts(pg) || []).map(a =>
+    bar.innerHTML = `<div class="acts">${acts.map(a =>
       `<button class="act ${a.cls || ""}" data-act="${a.act}">${ico(a.icon)}<span>${esc(a.label)}</span></button>`).join("")}</div>`;
   } else bar.innerHTML = "";
   bar.dataset.kind = kind;
   barSize();
 }
-function barSize() { document.documentElement.style.setProperty("--bar-h", bar.offsetHeight + "px"); }
+let barLastH = -1;
+function barSize() {
+  const h = bar.offsetHeight;
+  if (h === barLastH) return;
+  barLastH = h;
+  document.documentElement.style.setProperty("--bar-h", h + "px");
+}
 if (window.ResizeObserver) new ResizeObserver(() => { barSize(); stickBottom(curPage()); }).observe(bar);
 
-// 键盘：iOS 弹键盘时网页本身不缩，按可见区域把整个界面（和小芽通话层）抬到键盘上面
+// 键盘（安卓 / 浏览器）：按可见区域把整个界面抬到键盘上面
 function fitKeyboard() {
   const vv = window.visualViewport;
   if (!vv) return;
+  if (kbOwn) { if (window.scrollY) window.scrollTo(0, 0); return; }
   const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
   const was = document.body.classList.contains("kb");
-  document.documentElement.style.setProperty("--kb", kb + "px");
+  kbSet("--kb", kb);
+  kbSet("--kbt", kb);
   document.body.classList.toggle("kb", kb > 60);
   if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0);
   if (was !== kb > 60) setTimeout(() => stickBottom(curPage()), 60);
@@ -699,6 +741,53 @@ function fitKeyboard() {
 if (window.visualViewport) {
   visualViewport.addEventListener("resize", fitKeyboard);
   visualViewport.addEventListener("scroll", fitKeyboard);
+}
+
+// 键盘（iOS，2026-11-07 用户：点输入框后弹起非常慢）：Keyboard 插件的 native 模式写死「键盘动画时长 + 0.2 秒」之后才缩 WebView，
+// 键盘先把输入栏盖住，约 0.45 秒后界面才跳上去。所以启动时切成 none（setResizeMode 不用重装），收到 keyboardWillShow 当场跟键盘一起走：
+// 动画中只用 transform（长对话也不掉帧），走完才改布局 --kb；收起时先改布局再动画。--kbt 是目标值，给弹层、登录页用。
+// --kb 比键盘矮一个底部安全区：输入栏底部留给横条的那段正好藏在键盘后面，不用动 padding。内容短滚不动的页面不跟着走，只有输入栏上去
+let kbOwn = false, kbTo = 0, kbDone = null, kbAsk = 0;
+const KB_ANIM = { duration: 300, easing: "cubic-bezier(.38,.7,.125,1)", fill: "both" };
+function kbSet(name, px) { document.documentElement.style.setProperty(name, px + "px"); }
+function kbGo(h) {
+  if (kbDone) kbDone();                                   // 上一段还没走完就又变了：先落定
+  const to = h ? Math.max(0, h - kbProbe.offsetHeight) : 0, dh = to - kbTo;
+  if (!dh) return;
+  kbTo = to;
+  kbSet("--kbt", to);
+  const pg = curPage(), sc = pg && pg.el, S = sc ? sc.scrollTop : 0, stage = $("#stage");
+  let d = sc ? Math.min(S, -dh) : 0;                      // 内容跟着走多少：收起时最多退回顶部；弹起时看缩小后还能滚多远（scrollHeight 在内容短时等于页高，不能用）
+  if (dh > 0) {
+    const last = sc && sc.lastElementChild;
+    d = last ? Math.min(dh, Math.max(0, last.getBoundingClientRect().bottom - sc.getBoundingClientRect().top + S + parseFloat(getComputedStyle(sc).paddingBottom) - sc.clientHeight + dh - S)) : 0;
+  }
+  if (dh < 0) { kbSet("--kb", to); if (sc) sc.scrollTop = S - d; }
+  const moves = dh > 0 ? [[stage, 0, -d], [bar, 0, -dh]] : [[stage, -d, 0], [bar, dh, 0]];
+  const anims = moves.map(([x, a, b]) => x.animate([{ transform: `translateY(${a}px)` }, { transform: `translateY(${b}px)` }], KB_ANIM));
+  kbDone = () => {
+    kbDone = null;
+    anims.forEach(a => a.cancel());
+    if (dh > 0) { kbSet("--kb", to); if (sc) sc.scrollTop += d; }
+    stickBottom(curPage());
+  };
+  anims[0].onfinish = () => { if (kbDone) kbDone(); };
+}
+const kbProbe = document.body.appendChild(el('<i style="position:fixed;width:0;height:var(--bot);visibility:hidden;pointer-events:none"></i>'));
+if (Kbd && PLATFORM === "ios") {
+  try { Kbd.setResizeMode({ mode: "none" }).then(() => { kbOwn = true; }).catch(() => {}); } catch (e) { /* 没有 */ }
+  // 点了到键盘开始动的时间：超过半秒记一笔（第三方键盘冷启动慢就在这里看得出来），日志 grep「键盘慢」
+  document.addEventListener("focusin", e => { if (/^(TEXTAREA|INPUT)$/.test(e.target.tagName) && !kbTo) kbAsk = performance.now(); });
+  const show = h => {
+    if (kbAsk && online && performance.now() - kbAsk > 500) q("cerr", { k: "键盘慢", m: Math.round(performance.now() - kbAsk) + "ms", w: "", v: window.UI_VER || "" }).catch(() => {});
+    kbAsk = 0;
+    if (kbOwn) kbGo(h);
+  }, hide = () => { if (kbOwn) kbGo(0); };
+  // 插件同一个事件发两路（window 事件 + 监听器），都接：高度没变 kbGo 直接返回，哪路没到都不至于输入栏被键盘盖住
+  window.addEventListener("keyboardWillShow", e => show(e.keyboardHeight || 0));
+  window.addEventListener("keyboardWillHide", hide);
+  Promise.resolve(Kbd.addListener("keyboardWillShow", i => show(i.keyboardHeight || 0))).catch(() => {});
+  Promise.resolve(Kbd.addListener("keyboardWillHide", hide)).catch(() => {});
 }
 
 // ---------------------------------------------------------------- 对话气泡（三家共用）
@@ -762,7 +851,7 @@ function addPend(to, p) { p.k = ++pendSeq; p.t = Date.now(); pends[to].push(p); 
 function dropPend(to, k) { pends[to] = pends[to].filter(p => p.k !== k); redrawThread(to); }
 function prunePends(to, msgs) {                     // 服务器的对话里已经有这句了：去掉对应的临时气泡
   const mine = msgs.filter(m => m.r === "me").slice(-8).map(m => (m.text || "").trim());
-  pends[to] = pends[to].filter(p => p.st === "asr" || (!mine.includes((p.text || "").trim()) && Date.now() - p.t < 120000));
+  pends[to] = pends[to].filter(p => p.st === "asr" ? Date.now() - p.t < 30000 : !mine.includes((p.text || "").trim()) && Date.now() - p.t < 120000);
 }
 function redrawThread(to) {
   if (to === "xy") return hxRedraw(true);
@@ -775,12 +864,13 @@ function redrawThread(to) {
 // 打字发的回复只显示不念，按住说话的才念（服务器按 mode 分）。小芽通话（全屏 + 悬浮球）照旧，顶栏电话按钮进。
 const hx = { sid: null, msgs: null, busy: false, err: "" };
 async function hxLoad() {
+  const first = !hx.msgs;
   try {
     const d = await q("hx", { hop: "history", a: {} });
     Object.assign(hx, { sid: d.sid, msgs: d.msgs || [], busy: !!d.busy, err: "" });
     prunePends("xy", hx.msgs);
-  } catch (e) { hx.err = e.message; }
-  hxRedraw(true);
+  } catch (e) { hx.err = e.message; if (hx.msgs && hx.msgs.length) hint(e.message); }
+  hxRedraw(first);
 }
 function xyPage() { return stack.find(p => p.key === "home") || null; }      // 小芽页（侧栏里的一级页）；不在栈里就是 null，对话数据留在 hx 里
 function hxRedraw(stick) {
@@ -810,7 +900,9 @@ function onHxEv(m) {
     else if (t) Object.assign(t, { res: m.r, ok: m.ok, run: false });
     else L.push({ r: "tool", id: m.id, name: m.name, res: m.r, ok: m.ok });
   }
-  hxRedraw();
+  if (m.k === "busy") { hxRedraw(); return; }        // 开始 / 结束：立即画
+  const hp = xyPage();
+  if (hp === curPage()) drawSoon(hp); else if (hp) hp.dirty = true;
 }
 const HX_TOOL = {
   terminal: ["term", "运行命令"], process_manage: ["term", "管理进程"], execute_code: ["term", "跑脚本"], esp_python: ["term", "设备服务里跑 Python"],
@@ -884,24 +976,24 @@ function hxItemHtml(pg, m, i, cont) {
 // 左边抽屉（2026-10-15，用户：入口原来在对话上面一排，往下翻就被淹没了）：Claude 在忙 / 有新回复时左上角按钮带个点
 // 2026-10-27 起栈底是 Claude，小芽是侧栏第一项；当前所在的一级页高亮（返回键划出侧栏时一眼看到自己在哪）
 let tiles = null;                                    // op home 的数据：Claude 忙不忙、日报几条（侧栏和左上角的点用）
-function secKey() { const s = stack.find(p => p.sec); return s ? s.key : "claude"; }
+function secKey() { let k = "claude"; for (const p of stack) if (p.sec) k = p.key; return k; }      // 取最后一个：换一级页时旧页要等动画完才出栈，这期间栈里有两个
 function drawerHtml(d) {
   const c = (d && d.claude) || {}, busy = c.busy > 0, at = secKey();
   const oc = (d && d.oc) || {}, ob = (d && d.ocb) || {}, cb = (d && d.cb) || {};
-  const bi = cb.bi || {}, bc = cb.bc || {};
+  const bi = cb.bi || {}, bc = cb.bc || {}, xy = (d && d.xy) || {}, xz = (d && d.xz) || {};
   const row = (k, ic, name, sub, dot, to) => `<button class="row${(to || PAGE_OF[k]) === at ? " on" : ""}" style="--c:var(--${k});--cs:var(--${k}-soft)" data-act="dwgo:${to || PAGE_OF[k]}">` +
     `<span class="r-ic">${ico(ic)}</span><span class="r-main"><span class="r-t">${name}</span><span class="r-s">${esc(sub)}</span></span>` +
     `${dot ? '<span class="dot"></span>' : ""}<span class="chev">${ico("chev")}</span></button>`;
   const eng = (k, ic, name, e, idle, to) => row(k, ic, name, e.busy > 0 ? (e.busy > 1 ? `${e.busy} 个会话在忙` : "正在工作") : e.unread > 0 ? "有新回复" : idle, e.busy > 0 || e.unread > 0, to);
-  return `<div class="dw-head"><span class="orb sprout"></span><div class="dw-hd-t"><b>小芽</b><span class="conn-t"></span></div></div><div class="group dw-list">` +
-    row("xy", "spark", "小芽", "你的管家 · 说话办事") +
+  return `<div class="dw-head"><span class="orb sprout"><i></i></span><div class="dw-hd-t"><b>小芽</b><span class="conn-t"></span></div></div><div class="group dw-list">` +
+    row("xy", "spark", "小芽", xy.live ? "通话中" : xy.last || "你的管家 · 说话办事") +
     row("claude", "claude", "Claude", busy ? (c.busy > 1 ? `${c.busy} 个会话在忙` : "正在工作") : c.unread ? "有新回复" : "待命", busy || c.unread) +
     eng("oc", "code", "OpenCode", oc, "免费模型") + eng("oc", "cloud", "opencode—百度", ob, "百度云 · 免费模型", "ocb") +
     eng("oc", "layers", "CodeBuddy 国际版", bi, "腾讯 · 免费 + 积分", "cbi") + eng("oc", "code", "CodeBuddy 国内版", bc, "腾讯 · 免费 + 积分", "cbc") +
-    row("xz", "chat", "小智", "AI 对话") + row("news", "news", "日报", d && d.news && d.news.n ? `今天 ${d.news.n} 条` : "今日要闻") +
-    row("plg", "plug", "插座", "BroadLink · 家里") + row("fs", "folder", "文件", "硅谷服务器 · 只读") + row("sys", "layers", "系统", "运营看板 · 工具") +
+    row("xz", "chat", "小智", xz.title || "AI 对话") + row("news", "news", "日报", d && d.news && d.news.n ? `今天 ${d.news.n} 条` : "今日要闻") +
+    row("dc", "compass", "发现", "刷 GitHub 好项目") + row("plg", "plug", "插座", "BroadLink · 家里") + row("fs", "folder", "文件", "硅谷服务器 · 只读") + row("sys", "layers", "系统", "运营看板 · 工具") +
     (IAB && !BR.broken ? row("br", "globe", "浏览器", "地址栏 · 标签页 · 书签") : "") + "</div>" +
-    `<div class="dw-foot"><button data-act="dwgo:uplog">更新记录</button><span>关于 · ${esc(window.UI_VER || "开发版")}</span></div>`;
+    `<div class="dw-foot"><button data-act="dwgo:uplog">更新记录</button><button data-act="settings">设置</button><span>关于 · ${esc(window.UI_VER || "开发版")}</span></div>`;
 }
 let dwOn = false;
 function drawerUpd() {
@@ -909,8 +1001,23 @@ function drawerUpd() {
   const oc = (d && d.oc) || {}, ob = (d && d.ocb) || {}, cb = (d && d.cb) || {};
   const dot = [c, oc, ob, cb.bi || {}, cb.bc || {}].some(e => (e.busy || 0) > 0 || (e.unread || 0) > 0);
   $("#navMenu").classList.toggle("dot", dot);
-  if (dwOn) { $("#dwPanel").innerHTML = drawerHtml(d); updConn(); }
+  if (dwOn || WIDE) { $("#dwPanel").innerHTML = drawerHtml(d); updConn(); }
 }
+// 宽屏：侧栏常驻（不走 dwOn 那套滑出 / 收回），换页时只在「当前一级页」变了才重画高亮，流式刷新时不跟着重建
+function applyWide() {
+  WIDE = WIDE_MQ.matches;
+  const b = document.body;
+  b.classList.toggle("wide", WIDE);
+  b.classList.toggle("fine", WIDE && FINE_MQ.matches);
+  if (WIDE) {
+    if (dwOn) { dwOn = false; $("#drawer").classList.remove("on"); }
+    dwKey = secKey();
+    drawerUpd();
+  }
+  barSize();
+}
+WIDE_MQ.addEventListener("change", applyWide);
+FINE_MQ.addEventListener("change", applyWide);
 function openDrawer() {
   if (dwOn) return;
   dwOn = true;
@@ -922,19 +1029,21 @@ function openDrawer() {
 function closeDrawer() {
   if (!dwOn) return;
   dwOn = false;
+  BR.hold = Date.now() + 460;
   $("#drawer").classList.remove("on");
 }
 PAGES.home = {
-  ctx: "xy", bar: "composer", to: "xy", solid: true, thread: true,
+  ctx: "xy", bar: "composer", to: "xy", solid: true, thread: true, sid: () => hx.sid,
   title: () => "小芽",
   sub: () => '<span class="conn-t"></span>',
   right: () => arBtnHtml() + `<button class="nav-btn${call.on && call.to === "xy" ? " on" : ""}" data-act="call:xy" aria-label="小芽通话">${ico("phone")}</button>` +
+    `<button class="nav-btn" data-act="go:xysess" aria-label="历史会话">${ico("layers")}</button><button class="nav-btn" data-act="hxnew" aria-label="新建会话">${ico("compose")}</button>` +
     `<button class="nav-btn" data-act="xymenu" aria-label="更多">${ico("more")}</button>`,
   async load() { await hxLoad(); },
   html(pg) {
     const L = hx.msgs;
     let body;
-    if (!L) body = hx.err ? emptyHtml("spark", "连不上小芽", hx.err) : LOADING;
+    if (!L) body = hx.err ? `<div class="empty"><div class="e-ic">${ico("spark")}</div><b>小芽没回应</b><span>${esc(hx.err)}</span><button class="btn" data-act="hxretry">重试</button></div>` : LOADING;
     else if (!L.length && !pends.xy.length && !hx.busy) body = emptyHtml("spark", "跟小芽说说话", "打字或按住说话都行。她是你的管家：查东西、动手办事、定时提醒、记住你的习惯；要她把回复念出来，点右上角的喇叭");
     else body = `<div class="thread">${threadHtml(L.slice(-160), (m, k, cont) => hxItemHtml(pg, m, L.length - Math.min(160, L.length) + k, cont))}` +
       pends.xy.map(p => pendHtml(pg, p)).join("") +
@@ -946,7 +1055,7 @@ async function homeTiles() {
   try { tiles = await q("home"); if (!tiles.claude.busy) { cBusy.clear(); bgSync(); } } catch (e) { /* 没连上：先空着 */ }
   drawerUpd();
 }
-const PAGE_OF = { xy: "home", claude: "claude", xz: "xz", news: "news", oc: "oc", plg: "plug", fs: "files", sys: "systems", br: "browser" };
+const PAGE_OF = { xy: "home", claude: "claude", xz: "xz", news: "news", dc: "discover", oc: "oc", plg: "plug", fs: "files", sys: "systems", br: "browser" };
 function arBtnHtml() {
   return `<button class="nav-btn ar${autoRead ? " lit" : ""}" data-act="artog" aria-label="自动朗读" aria-pressed="${autoRead}">${ico(autoRead ? "speak" : "speakOff")}</button>`;
 }
@@ -967,25 +1076,25 @@ function callBtnHtml() {
 }
 function openXyMenu() {
   const quick = [
-    ["hxnew", "compose", "新话题"],
+    ["hxnew", "compose", "新建会话"],
     ["xymodels", "spark", "模型"],
-    ["xygo:xysess", "layers", "历史对话"],
+    ["xygo:xysess", "layers", "历史会话"],
     ["xygo:xymem", "book", "记忆"],
     ["xygo:xyskills", "spark", "技能"],
     ["xygo:xycron", "clock", "定时任务"],
   ];
-  openSheet("xymenu", `<div class="sh-head"><b>小芽</b><span>你的个人管家（Hermes）</span></div><div class="v2-more-grid">` +
+  openSheet("xymenu", `<div class="sh-head"><b>小芽</b><span>你的个人管家</span></div><div class="v2-more-grid">` +
     quick.map(([a, ic, t]) => `<button data-act="${a}"><span class="v2-more-ic">${ico(ic)}</span><span>${t}</span></button>`).join("") + `</div>` +
     `<div class="group"><button class="row" data-act="settings"><span class="r-ic">${ico("sliders")}</span><span class="r-main"><span class="r-t">连接与设置</span><span class="r-s">服务器地址、后台运行、通知、账号</span></span><span class="chev">${ico("chev")}</span></button></div>`);
 }
 
-// 小芽的模型单（2026-10-17）：ds / qwen 原路进，OpenCode 那批免费档走 ocbridge 桥；/model 只切会话，config 默认不动
+// 小芽的模型单（2026-10-17）：ds / qwen 原路进，OpenCode 那批免费档走 ocbridge 桥，CodeBuddy 两站走 cbcn / cbintl 桥；/model 只切会话，config 默认不动
 async function openXyModels() {
   openSheet("model", `<div class="sh-head"><b>小芽的模型</b><span>换谁来说话，切完直接生效；想用回谁就回来点谁</span></div><div id="mdlBox">${LOADING}</div>`);
   quotaLoad();
   try {
-    const [d, oc] = await Promise.all([hxq("brain"), q("o_models")]);
-    const cur = d.provider === "ocbridge" ? "ocbridge/" + (d.model || "") : d.provider === "alibaba" ? "qwen-plus" : "deepseek-flash";
+    const [d, oc, cb] = await Promise.all([hxq("brain"), q("o_models"), q("xy_cbmodels").catch(() => ({}))]);
+    const cur = ["ocbridge", "cbcn", "cbintl"].includes(d.provider) ? d.provider + "/" + (d.model || "") : d.provider === "alibaba" ? "qwen-plus" : "deepseek-flash";
     const row = (k, t, sub) => `<button class="row${k === cur ? " cur" : ""}" data-act="xypick:${k}"><span class="r-main"><span class="r-t">${esc(t)}</span>${sub ? `<span class="r-s">${esc(sub)}</span>` : ""}</span>${k === cur ? `<span class="check">${ico("check")}</span>` : ""}</button>`;
     $("#mdlBox").innerHTML = `<div class="sh-sec">DeepSeek</div>${qLine("deepseek")}<div class="group">` +
       row("deepseek-flash", "DeepSeek", "原来那条路") + `</div><div class="sh-sec">通义</div>${qLine("qwen")}<div class="group">` +
@@ -994,8 +1103,12 @@ async function openXyModels() {
       `<button class="row${d.thinking ? " cur" : ""}" data-act="xythink:1"><span class="r-ic">${ico("spark")}</span><span class="r-main"><span class="r-t">开</span><span class="r-s">先想一遍再答，更聪明也慢些</span></span>${d.thinking ? `<span class="check">${ico("check")}</span>` : ""}</button>` +
       `<button class="row${!d.thinking ? " cur" : ""}" data-act="xythink:0"><span class="r-ic">${ico("clock")}</span><span class="r-main"><span class="r-t">关</span><span class="r-s">直接答，快</span></span>${!d.thinking ? `<span class="check">${ico("check")}</span>` : ""}</button>` +
       `</div><div class="sh-sec">OpenCode · 全免费</div>${qLine("oc")}<div class="group">` +
-      (oc.list || []).map(([k, v]) => row("ocbridge/" + k, v, "免费，走 opencode 桥")).join("") + `</div>`;
-  } catch (e) { $("#mdlBox").textContent = e.message; }
+      (oc.list || []).map(([k, v]) => row("ocbridge/" + k, v, "免费")).join("") + `</div>` +
+      // CodeBuddy 两个站点（2026-11-05）：免费款排最前，其余按积分倍率扣该站点账号的积分
+      [["bc", "cbcn", "CodeBuddy 国内版", "cbc"], ["bi", "cbintl", "CodeBuddy 国际版", "cbi"]].map(([p, prov, title, qk]) =>
+        `<div class="sh-sec">${title}</div>${qLine(qk)}<div class="group">` +
+        (cb[p] || []).map(([k, v]) => row(prov + "/" + k, v, "走 " + title)).join("") + `</div>`).join("");
+  } catch (e) { $("#mdlBox").innerHTML = `<div class="fs-note bad">${esc(e.message)}</div><button class="btn" data-act="xymodels">重试</button>`; }
 }
 
 // ---------------------------------------------------------------- 小芽的管理页：记忆 / 技能 / 定时任务 / 历史对话（都走 hx，在 Hermes 那边直接读写）
@@ -1135,28 +1248,40 @@ function openCron(k) {
     `<button class="btn" data-act="cron:${j.state === "paused" ? "resume" : "pause"}:${esc(j.id)}">${j.state === "paused" ? "恢复" : "暂停"}</button></div>` +
     `<button class="btn danger wide" data-act="cron:remove:${esc(j.id)}">删除</button>`);
 }
+// 历史会话的搜索（2026-11-09 用户：所有 AI 的历史会话都能按标题、对话内容搜）：七家共用这个搜索框，op 带 q，服务器只回搜到的（话里搜到的带 snip = 那句前后一段）。
+// 回车 / 键盘上的「搜索」才搜，清空再搜 = 回到全部；搜的过程中又换了词，旧词的结果不要
+function sessHead(pg, n) {
+  return `<div class="v2-sess-note"><span>${n == null ? "最近使用" : pg.p.q ? `搜到 ${n} 个会话` : `${n} 个会话`}</span><span>按最近使用排序</span></div>` +
+    `<div class="search">${ico("search")}<input id="sessQ" placeholder="搜标题和会话内容" enterkeyhint="search" value="${esc(pg.p.q || "")}"></div>`;
+}
+function sessEmpty(pg, icon, sub) { return pg.p.q ? emptyHtml(icon, "没搜到", "换个说法试试") : emptyHtml(icon, "还没有会话", sub); }
+function sessSnip(pg, r) { return pg.p.q && r.snip ? `<span class="r-s snip">${esc(r.snip)}</span>` : ""; }
+async function sessLoad(pg, get) {
+  const qq = pg.p.q || "";
+  try { const d = await get(qq); if ((pg.p.q || "") === qq) { pg.data = d; draw(pg); } } catch (e) { if ((pg.p.q || "") === qq) loadErr(pg, e); }
+}
 PAGES.xysess = {
-  ctx: "xy", title: () => "历史对话", sub: () => "小芽", solid: true,
-  async load(pg) { try { pg.data = await hxq("sessions", { q: pg.p.q || "" }); draw(pg); } catch (e) { loadErr(pg, e); } },
+  ctx: "xy", title: () => "历史会话", sub: () => "小芽", solid: true,
+  right: () => `<button class="nav-btn" data-act="hxnew:back" aria-label="新建会话">${ico("compose")}</button>`,
+  load: pg => sessLoad(pg, qq => hxq("sessions", { q: qq })),
   html(pg) {
     const rows = pg.data && pg.data.sessions.filter(r => r.n || r.cur);
-    const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 段对话` : "最近使用"}</span><span>按最近使用排序</span></div>` +
-      `<div class="search">${ico("search")}<input id="sessQ" placeholder="搜对话里说过的话" enterkeyhint="search" value="${esc(pg.p.q || "")}"></div>`;
+    const head = sessHead(pg, rows ? rows.length : null);
     if (!pg.data) return head + LOADING;
-    if (!rows.length) return head + emptyHtml("layers", pg.p.q ? "没搜到" : "还没有对话", pg.p.q ? "换个说法试试" : "跟小芽说句话就有了");
+    if (!rows.length) return head + sessEmpty(pg, "layers", "跟小芽说句话就有了");
     return head + `<div class="group">${rows.map(r => `<button class="row${r.cur ? " cur" : ""}" data-act="sessopen:${esc(r.sid)}"><span class="r-ic">${ico("spark")}</span><span class="r-main">
-      <span class="r-t">${esc(r.title || r.snip || "（新对话）")}</span><span class="r-s">${r.cur ? '<span class="tag gray">当前</span>' : ""}${r.t ? reltime(r.t) : ""}${r.n ? ` · ${r.n} 条` : ""}</span>
-      ${pg.p.q && r.snip ? `<span class="r-s snip">${esc(r.snip)}</span>` : ""}</span><span class="chev">${ico("chev")}</span></button>`).join("")}</div>`;
+      <span class="r-t">${esc(r.title || r.snip || "（新会话）")}</span><span class="r-s">${r.cur ? '<span class="tag gray">当前</span>' : ""}${r.t ? reltime(r.t) : ""}${r.n ? ` · ${r.n} 条` : ""}</span>
+      ${sessSnip(pg, r)}</span><span class="chev">${ico("chev")}</span></button>`).join("")}</div>`;
   },
 };
 PAGES.xysessView = {
-  ctx: "xy", thread: true, bar: "acts", solid: true, title: pg => pg.p.title || "历史对话",
-  acts: pg => pg.p.cur ? [] : [{ label: "继续这段对话", icon: "repeat", cls: "primary", act: "sessresume:" + pg.p.sid }],
+  ctx: "xy", thread: true, bar: "acts", solid: true, title: pg => pg.p.title || "历史会话",
+  acts: pg => pg.p.cur ? [] : [{ label: "继续这个会话", icon: "repeat", cls: "primary", act: "sessresume:" + pg.p.sid }],
   async load(pg) { try { pg.data = (await hxq("history", { sid: pg.p.sid, limit: 400 })).msgs; pg.stick = true; draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     if (!pg.data) return LOADING;
     const items = pg.data.map(m => m.r === "file" ? { r: "ai", text: "（文件：" + (m.name || "") + "）" } : m.r === "me" ? { r: "me", text: m.text } : m);
-    return items.length ? `<div class="thread">${threadHtml(items, (m, k, cont) => m.r === "tool" ? hxToolHtml(m, k) : m.r === "cron" ? hxCronHtml(m) : msgHtml(pg, m, "xy", cont))}</div>` : emptyHtml("layers", "这段对话是空的", "");
+    return items.length ? `<div class="thread">${threadHtml(items, (m, k, cont) => m.r === "tool" ? hxToolHtml(m, k) : m.r === "cron" ? hxCronHtml(m) : msgHtml(pg, m, "xy", cont))}</div>` : emptyHtml("layers", "这个会话是空的", "");
   },
 };
 
@@ -1194,16 +1319,19 @@ function cItemHtml(pg, m, k, cont, busy) {
   return msgHtml(pg, m, "claude", cont);
 }
 PAGES.claude = {
-  ctx: "claude", bar: "composer", to: "claude", solid: true, thread: true, midAct: "cmodel",
+  ctx: "claude", bar: "composer", to: "claude", solid: true, thread: true, midAct: "cmodel", sid: pg => pg.data && pg.data.sid,
   title: pg => pg.data ? pg.data.title : "Claude",
   sub: pg => pg.data ? `<span class="mpick">${esc(pg.data.model)}${ico("down")}</span>${qLiteHtml(/^deepseek/i.test(pg.data.model) ? "deepseek" : "claude")}` : "",
   right: () => `<button class="nav-btn" data-act="go:csess" aria-label="历史会话">${ico("layers")}</button><button class="nav-btn" data-act="cnew" aria-label="新建会话">${ico("compose")}</button>`,
   async load(pg) {
+    const seq = pg.req = (pg.req || 0) + 1;
     try {
       const d = await q("c_thread");
-      if (!cKeepOlder(pg.data, d)) pg.stick = true;                  // 往前翻着看的时候重拉（做完、重连）：别跳到底
+      if (pg.req !== seq) return;
+      const fresh = !pg.data || pg.data.sid !== d.sid;               // 只有第一次加载 / 换了会话才跳到底
+      if (!cKeepOlder(pg.data, d) && fresh) pg.stick = true;
       pg.data = d; prunePends("claude", d.msgs); draw(pg);
-    } catch (e) { loadErr(pg, e); }
+    } catch (e) { if (pg.req === seq) loadErr(pg, e); }
   },
   html(pg) {
     const d = pg.data;
@@ -1244,7 +1372,7 @@ function cMerge(d, m) {
 function onClaudeEv(m) {
   if (m.add || m.res) {                                                // 干活的每一步（思考、工具调用、结果、中间说的话）：接到对话后面；首页不用跟着刷
     const pg = claudePage();
-    if (pg && pg.data && m.sid === pg.data.sid && cMerge(pg.data, m) && pg.data.busy) draw(pg);
+    if (pg && pg.data && m.sid === pg.data.sid && cMerge(pg.data, m) && pg.data.busy) drawSoon(pg);
     return;
   }
   if (m.busy) cBusy.add(m.sid); else if (m.done) { cBusy.delete(m.sid); quotaLoad(true); }      // Claude 收工：额度马上重取
@@ -1260,17 +1388,17 @@ function onClaudeEv(m) {
 PAGES.csess = {
   ctx: "claude", title: () => "历史会话", sub: () => "Claude", solid: true,
   right: () => `<button class="nav-btn" data-act="cnew:back" aria-label="新建会话">${ico("compose")}</button>`,
-  async load(pg) { try { pg.data = await q("c_sessions"); draw(pg); } catch (e) { loadErr(pg, e); } },
+  load: pg => sessLoad(pg, qq => q("c_sessions", { q: qq })),
   html(pg) {
     const rows = pg.data;
-    const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 个会话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
+    const head = sessHead(pg, rows ? rows.length : null);
     if (!rows) return head + LOADING;
-    if (!rows.length) return head + emptyHtml("layers", "还没有会话", "发一句话就会开一个新会话");
+    if (!rows.length) return head + sessEmpty(pg, "layers", "发一句话就会开一个新会话");
     return head + `<div class="group">${rows.map(r => {
       const tags = (r.busy ? '<span class="tag"><span class="spin xs"></span>进行中</span>' : r.unread ? '<span class="tag">新回复</span>' : "") +
         (r.cur ? '<span class="tag gray">当前</span>' : "");
       return `<button class="row${r.cur ? " cur" : ""}" data-act="csw:${r.sid}"><span class="r-ic">${ico("spark")}</span><span class="r-main"><span class="r-t">${esc(r.title)}</span>
-        <span class="r-s">${tags}${reltime(r.t)}${r.model !== "Claude" ? " · " + esc(r.model) : ""}</span></span>
+        <span class="r-s">${tags}${reltime(r.t)}${r.model !== "Claude" ? " · " + esc(r.model) : ""}</span>${sessSnip(pg, r)}</span>
         <span class="${r.cur ? "check" : "chev"}">${ico(r.cur ? "check" : "chev")}</span></button>`;
     }).join("")}</div>`;
   },
@@ -1283,9 +1411,9 @@ PAGES.uplog = {
   html(pg) {
     const d = pg.data;
     const cur = esc(window.UI_VER || "开发版");
-    const head = `<div class="v2-version-card"><span>当前界面</span><b>${cur}</b><p>${esc(window.UI_FROM || "内置")} · 安装包 v${window.SHELL_V || 1}${Link ? "" : " · 没有原生模块"}</p></div>`;
+    const head = `<div class="v2-version-card"><span>当前界面</span><b>${cur}</b><p>${esc(window.UI_FROM || "内置")} · 安装包 v${window.SHELL_V || 1}${Link ? "" : " · 网页版"}</p></div>`;
     if (!d) return head + LOADING;
-    if (!d.log.length) return head + emptyHtml("layers", "看不到提交记录", "服务器上没有 git 历史");
+    if (!d.log.length) return head + emptyHtml("layers", "看不到提交记录", "服务器上暂时读不到");
     return head + `<div class="v2-manage-note"><span>服务器代码 ${esc(d.head)}</span><span>提交后才下发</span></div>` +
       `<div class="v2-sec-head"><span><b>最近更新</b><em>界面连上服务器会自动换成已提交的新版本</em></span><span>${d.log.length} 条</span></div>` +
       `<div class="group">${d.log.map(r => `<div class="row"><span class="r-ic">${ico("layers")}</span><span class="r-main"><span class="r-t">${esc(r.s)}</span><span class="r-s">${esc(r.t)} · ${esc(r.h)}</span></span></div>`).join("")}</div>`;
@@ -1326,7 +1454,7 @@ function oItemHtml(pg, m, k, cont, busy, who) {
 function onOcEv(k, m) {
   if (m.add || m.res) {                                // 干活的每一步（思考、工具、结果）：接到对话后面
     const pg = ocPage(k);
-    if (pg && pg.data && (!m.sid || !pg.data.sid || m.sid === pg.data.sid) && cMerge(pg.data, m) && pg.data.busy) draw(pg);
+    if (pg && pg.data && (!m.sid || !pg.data.sid || m.sid === pg.data.sid) && cMerge(pg.data, m) && pg.data.busy) drawSoon(pg);
     return;
   }
   if (m.busy) oBusy.add(k + ":" + m.sid); else if (m.done) { oBusy.delete(k + ":" + m.sid); if (k === "cbi" || k === "cbc") quotaLoad(true); }   // CodeBuddy 收工：积分马上重取
@@ -1341,16 +1469,19 @@ function onOcEv(k, m) {
 function makeOcPage(k) {
   const E = OC[k];
   return {
-    ctx: "oc", bar: "composer", to: k, solid: true, thread: true, midAct: "ocmodel",
+    ctx: "oc", bar: "composer", to: k, solid: true, thread: true, midAct: "ocmodel", sid: pg => pg.data && pg.data.sid,
     title: pg => pg.data ? pg.data.title : E.name,
     sub: pg => pg.data ? `<span class="mpick">${esc(pg.data.model)}${pg.data.variant ? esc(" · " + (OC_VAR_ZH[pg.data.variant] || pg.data.variant)) : ""}${ico("down")}</span>${k === "oc" || k === "cbi" || k === "cbc" ? qLiteHtml(k) : ""}` : "",
     right: () => `<button class="nav-btn" data-act="go:${E.sess}" aria-label="历史会话">${ico("layers")}</button><button class="nav-btn" data-act="onew" aria-label="新建会话">${ico("compose")}</button>`,
     async load(pg) {
+      const seq = pg.req = (pg.req || 0) + 1;
       try {
         const d = await q(E.p + "_thread");
-        if (!ocKeep(pg.data, d)) pg.stick = true;                // 往前翻着看的时候重拉：别跳到底
+        if (pg.req !== seq) return;
+        const fresh = !pg.data || pg.data.sid !== d.sid;           // 只有第一次加载 / 换了会话才跳到底
+        if (!ocKeep(pg.data, d) && fresh) pg.stick = true;
         pg.data = d; prunePends(k, d.msgs); draw(pg);
-      } catch (e) { loadErr(pg, e); }
+      } catch (e) { if (pg.req === seq) loadErr(pg, e); }
     },
     html(pg) {
       const d = pg.data;
@@ -1384,17 +1515,17 @@ function makeOcSessions(k) {
   return {
     ctx: "oc", title: () => "历史会话", sub: () => E.over, solid: true,
     right: () => `<button class="nav-btn" data-act="onew:back" aria-label="新建会话">${ico("compose")}</button>`,
-    async load(pg) { try { pg.data = await q(E.p + "_sessions"); draw(pg); } catch (e) { loadErr(pg, e); } },
+    load: pg => sessLoad(pg, qq => q(E.p + "_sessions", { q: qq })),
     html(pg) {
       const rows = pg.data;
-      const head = `<div class="v2-sess-note"><span>${rows ? `${rows.length} 个会话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
+      const head = sessHead(pg, rows ? rows.length : null);
       if (!rows) return head + LOADING;
-      if (!rows.length) return head + emptyHtml("layers", "还没有会话", "发一句话就会开一个新会话");
+      if (!rows.length) return head + sessEmpty(pg, "layers", "发一句话就会开一个新会话");
       return head + `<div class="group">${rows.map(r => {
         const tags = (r.busy ? '<span class="tag"><span class="spin xs"></span>进行中</span>' : r.unread ? '<span class="tag">新回复</span>' : "") +
           (r.cur ? '<span class="tag gray">当前</span>' : "");
         return `<button class="row${r.cur ? " cur" : ""}" data-act="osw:${r.sid}"><span class="r-ic">${ico(k === "oc" || k === "ocb" ? "code" : "layers")}</span><span class="r-main"><span class="r-t">${esc(r.title)}</span>
-          <span class="r-s">${tags}${reltime(r.t)}${r.model ? " · " + esc(r.model) : ""}</span></span>
+          <span class="r-s">${tags}${reltime(r.t)}${r.model ? " · " + esc(r.model) : ""}</span>${sessSnip(pg, r)}</span>
           <span class="${r.cur ? "check" : "chev"}">${ico(r.cur ? "check" : "chev")}</span></button>`;
       }).join("")}</div>`;
     },
@@ -1406,7 +1537,7 @@ PAGES.cbisess = makeOcSessions("cbi");
 PAGES.cbcsess = makeOcSessions("cbc");
 async function openOcModels() {
   const E = ocHost();
-  openSheet("model", `<div class="sh-head"><b>${esc(E.name)} 的设置</b><span>${esc(E.tip)}</span></div><div id="mdlBox">${LOADING}</div>`);
+  openSheet("model", `<div class="sh-head"><b>${esc(E.name)} 的模型</b><span>${esc(E.tip)}</span></div><div id="mdlBox">${LOADING}</div>`);
   quotaLoad();
   try {
     const d = await q(E.p + "_models");
@@ -1424,15 +1555,15 @@ async function openOcModels() {
       pick("octhink:1", d.thinking, "spark", "显示", "模型的思考过程也画在对话里") +
       pick("octhink:0", !d.thinking, "clock", "不显示", "只看回答，界面干净") + `</div>`;
     $("#mdlBox").innerHTML = html;
-  } catch (e) { $("#mdlBox").textContent = e.message; }
+  } catch (e) { $("#mdlBox").innerHTML = `<div class="fs-note bad">${esc(e.message)}</div><button class="btn" data-act="ocmodel">重试</button>`; }
 }
 
 // ---------------------------------------------------------------- 小智
 PAGES.xz = {
-  ctx: "xz", bar: "composer", to: "xz", solid: true, thread: true,
+  ctx: "xz", bar: "composer", to: "xz", solid: true, thread: true, sid: pg => pg.data && pg.data.id,
   title: pg => pg.data && pg.data.msgs.length ? pg.data.title : "小智",
   sub: () => "AI 对话" + (quotaD && quotaD.today ? `<span class="qlite"> · 豆包今天 ${quotaD.today.xz || 0} 次</span>` : ""),
-  right: () => arBtnHtml() + (srvCall >= 2 ? `<button class="nav-btn${call.on && call.to === "xz" ? " on" : ""}" data-act="call:xz" aria-label="小智通话">${ico("phone")}</button>` : "") + `<button class="nav-btn" data-act="go:xzconv" aria-label="历史对话">${ico("layers")}</button><button class="nav-btn" data-act="xznew" aria-label="新对话">${ico("compose")}</button>`,
+  right: () => arBtnHtml() + (srvCall >= 2 ? `<button class="nav-btn${call.on && call.to === "xz" ? " on" : ""}" data-act="call:xz" aria-label="小智通话">${ico("phone")}</button>` : "") + `<button class="nav-btn" data-act="go:xzconv" aria-label="历史会话">${ico("layers")}</button><button class="nav-btn" data-act="xznew" aria-label="新建会话">${ico("compose")}</button>`,
   async load(pg) {
     try { pg.data = await q("xz_thread"); prunePends("xz", pg.data.msgs); pg.stick = true; draw(pg); } catch (e) { loadErr(pg, e); }
   },
@@ -1466,20 +1597,33 @@ function onXzEv(m) {
   homeDirty();
 }
 PAGES.xzconv = {
-  ctx: "xz", title: () => "历史对话", sub: () => "小智", solid: true,
-  right: () => `<button class="nav-btn" data-act="xznew:back" aria-label="新对话">${ico("compose")}</button>`,
-  async load(pg) { try { pg.data = await q("xz_convs"); draw(pg); } catch (e) { loadErr(pg, e); } },
+  ctx: "xz", title: () => "历史会话", sub: () => "小智", solid: true,
+  right: () => `<button class="nav-btn" data-act="xznew:back" aria-label="新建会话">${ico("compose")}</button>`,
+  load: pg => sessLoad(pg, qq => q("xz_convs", { q: qq })),
   html(pg) {
-    const head = `<div class="v2-sess-note"><span>${pg.data ? `${pg.data.length} 段对话` : "最近使用"}</span><span>按最近使用排序</span></div>`;
+    const head = sessHead(pg, pg.data ? pg.data.length : null);
     if (!pg.data) return head + LOADING;
-    if (!pg.data.length) return head + emptyHtml("chat", "还没有对话", "和小智说句话就会开一段新对话");
+    if (!pg.data.length) return head + sessEmpty(pg, "chat", "和小智说句话就会开一个新会话");
     return head + `<div class="group">${pg.data.map(c => `<button class="row${c.cur ? " cur" : ""}" data-act="xzsw:${c.id}"><span class="r-ic">${ico("chat")}</span><span class="r-main">
-      <span class="r-t">${esc(c.n ? c.title : "（空对话）")}</span><span class="r-s">${c.cur ? '<span class="tag gray">当前</span>' : ""}${reltime(c.t)} · ${Math.ceil(c.n / 2)} 轮</span></span>
+      <span class="r-t">${esc(c.n ? c.title : "（空会话）")}</span><span class="r-s">${c.cur ? '<span class="tag gray">当前</span>' : ""}${reltime(c.t)} · ${Math.ceil(c.n / 2)} 轮</span>${sessSnip(pg, c)}</span>
       <span class="${c.cur ? "check" : "chev"}">${ico(c.cur ? "check" : "chev")}</span></button>`).join("")}</div>`;
   },
 };
 
 // ---------------------------------------------------------------- AI 日报
+// 手机上正在念的那条：服务器念每一条前推 ev{w: news, k, n}（n = 这次念到第几条），念完 / 被停推 k = -1（2026-11-07 用户：点了播放页面没变化）
+let newsNow = -1, newsEnd = 0;
+function onNewsEv(m) {
+  const k = +m.k;
+  if (k === newsNow) return;
+  newsNow = k; newsEnd = +m.n || 0;
+  for (const pg of stack) {
+    if (pg.key === "news") {                          // 重取一遍：「上次听到这里」跟着走；取完把正在播的那条滚到屏幕中间
+      const done = pg.def.load(pg);
+      if (done && done.then) done.then(() => { const c = pg === curPage() && k >= 0 && pg.el.querySelector(".news-v2-card.playing"); if (c) c.scrollIntoView({ block: "center", behavior: "smooth" }); });
+    } else if (pg.key === "newsItem") { if (pg === curPage()) draw(pg); else pg.dirty = true; }
+  }
+}
 PAGES.news = {
   ctx: "news", title: () => "日报", solid: true,
   right: () => `<button class="nav-btn" data-act="reload" aria-label="刷新日报">${ico("repeat")}</button>`,
@@ -1487,13 +1631,18 @@ PAGES.news = {
   html(pg) {
     const d = pg.data;
     const date = d && d.date ? `${+d.date.slice(5, 7)}月${+d.date.slice(8, 10)}日` : "";
-    const head = `<div class="news-v2-date">今天${date ? ` · ${date}` : ""}${d ? ` · 已生成 ${d.items.length} 条` : ""}</div>`;
+    const now = new Date(), pad = v => String(v).padStart(2, "0");
+    const isToday = !!d && d.date === `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const head = `<div class="news-v2-date">${isToday ? "今天" : date}${isToday && date ? ` · ${date}` : ""}${d ? ` · 已生成 ${d.items.length} 条` : ""}</div>`;
     if (!d) return head + LOADING;
     if (!d.items.length) return head + emptyHtml("news", "今天还没有日报", "有新消息时会生成在这里");
-    const play = `<div class="news-v2-actions"><button class="news-v2-play" data-act="nplay:0"><span class="nv-ic">${ico("play")}</span><span>播放全部</span></button>` +
+    const nowIt = newsNow >= 0 && d.items[newsNow];
+    const nowBar = nowIt ? `<div class="news-v2-now"><span class="eq"><i></i><i></i><i></i></span><span class="nn-t">正在播放 · 第 ${newsNow + 1} 条${newsEnd > newsNow + 1 ? `（念到第 ${newsEnd} 条）` : ""}</span>` +
+      `<button data-act="spstop">停止</button></div>` : "";
+    const play = nowBar + `<div class="news-v2-actions"><button class="news-v2-play" data-act="nplay:0"><span class="nv-ic">${ico("play")}</span><span>播放全部</span></button>` +
       (d.last ? `<button class="news-v2-play ghost" data-act="nresume"><span class="nv-ic">${ico("repeat")}</span><span>接着听 · 第 ${d.last} 条</span></button>` : "") + "</div>";
-    return head + play + `<div class="news-v2-list">${d.items.map(([sec, t, src], k) => `<button class="news-v2-card${d.last === k + 1 ? " last" : ""}" data-act="nitem:${k}">
-      <span class="news-v2-top"><span class="news-v2-sec"><i></i>${esc(sec)}</span>${d.last === k + 1 ? '<span class="news-v2-last">上次听到这里</span>' : ""}</span>
+    return head + play + `<div class="news-v2-list">${d.items.map(([sec, t, src], k) => `<button class="news-v2-card${d.last === k + 1 ? " last" : ""}${newsNow === k ? " playing" : ""}" data-act="nitem:${k}">
+      <span class="news-v2-top"><span class="news-v2-sec"><i></i>${esc(sec)}</span>${newsNow === k ? '<span class="news-v2-last now">正在播放</span>' : d.last === k + 1 ? '<span class="news-v2-last">上次听到这里</span>' : ""}</span>
       <span class="news-v2-title">${esc(t)}</span>
       ${src ? `<span class="news-v2-meta">${esc(src)}</span>` : ""}</button>`).join("")}</div>` +
       `<div class="news-v2-end">今日 ${d.items.length} 条</div>`;
@@ -1501,14 +1650,14 @@ PAGES.news = {
 };
 PAGES.newsItem = {
   ctx: "news", bar: "acts", title: pg => pg.data ? `第 ${pg.p.k + 1} 条` : "日报", solid: true,
-  right: pg => `<button class="nav-btn" data-act="nsay:${pg.p.k}" aria-label="只念这条">${ico("speak")}</button>`,
   acts: pg => [{ label: "从这条连播", icon: "play", cls: "primary", act: "nplay:" + pg.p.k }, { label: "只念这条", icon: "speak", act: "nsay:" + pg.p.k }],
   async load(pg) { try { pg.data = await q("news_item", { k: pg.p.k }); draw(pg); } catch (e) { loadErr(pg, e); } },
   html(pg) {
     const d = pg.data;
     if (!d) return LOADING;
-    return `<div class="v2-article-meta"><span>${esc(d.sec)} · ${pg.p.k + 1}</span></div><article class="article"><h1>${esc(d.title)}</h1>
-      <div class="prose">${esc(d.d || "")}</div>${d.src ? `<div class="source">${ico("link")}${esc(d.src)}</div>` : ""}</article>`;
+    return `<div class="v2-article-meta"><span>${esc(d.sec)} · ${pg.p.k + 1}${newsNow === pg.p.k ? " · 正在播放" : ""}</span></div><article class="article"><h1>${esc(d.title)}</h1>
+      <div class="prose">${esc(d.d || "")}</div>${d.url ? `<button class="source go" data-act="nlink">${ico("link")}<span>${esc(d.src || "原文")}</span><b>查看原文</b>${ico("chev")}</button>`
+        : d.src ? `<div class="source">${ico("link")}${esc(d.src)}</div>` : ""}</article>`;
   },
 };
 
@@ -1799,7 +1948,7 @@ async function fvPdfLoad(pg, url, conv) {
     const doc = await pdfjsLib.getDocument({ data: bytes, cMapUrl: libUrl("pdfjs/cmaps/"), cMapPacked: true, standardFontDataUrl: libUrl("pdfjs/standard_fonts/") }).promise;
     const v = (await doc.getPage(1)).getViewport({ scale: 1 });
     pg.pdf = doc; d.pages = doc.numPages; d.ratio = v.height / v.width;
-  } catch (e) { d.err = /password/i.test(e.message || "") ? "这个 PDF 有密码，打不开" : e.message || "打不开这个文件"; }
+  } catch (e) { d.err = /password/i.test(e.message || "") ? "这个 PDF 有密码，打不开" : zhErr(e.message, "打不开这个文件"); }
   d.busy = false; draw(pg); fvPdfMount(pg);
 }
 function fvPdfMount(pg) {
@@ -1990,7 +2139,7 @@ PAGES.fileView = {
     if (d.busy) return head + (d.note ? `<div class="fs-note">${esc(d.note)}</div>` : "") + LOADING;
     if (d.err) return head + `<div class="fs-note bad">${esc(d.err)}</div><button class="btn" data-act="reload">重试</button>`;
     switch (d.kind) {
-      case "image": return head + (p.size > FS_IMG_MAX ? '<div class="fs-note">图片超过 20MB，不在这里预览，点下面的「下载 / 打开」。</div>' : `<img class="fs-img" data-act="img" src="${esc(src)}" alt="">`);
+      case "image": return head + (p.size > FS_IMG_MAX ? '<div class="fs-note">图片超过 20MB，不在这里预览，点下面的「下载 / 打开」。</div>' : `<img class="fs-img" data-act="img" src="${esc(src)}" alt="" onerror="this.outerHTML='<div class=fs-note>图片打不开，用下面的下载 / 打开。</div>'">`);
       case "audio": return head + `<audio class="fv-media" controls preload="metadata" src="${esc(src)}" onerror="this.insertAdjacentHTML('afterend','<div class=fs-note>这个音频格式手机放不了，点下面的「下载 / 打开」。</div>')"></audio>`;
       case "video": return head + `<video class="fv-media" controls playsinline preload="metadata" src="${esc(src)}" onerror="this.insertAdjacentHTML('afterend','<div class=fs-note>这个视频格式手机放不了，点下面的「下载 / 打开」。</div>')"></video>`;
       case "pdf": case "office": return head + '<div class="pdf-doc"></div>';
@@ -2063,6 +2212,7 @@ function onEv(m) {
   else if (m.w === "xz") onXzEv(m);
   else if (m.w === "xy") onXyEv(m);
   else if (m.w === "hx") onHxEv(m);
+  else if (m.w === "news") onNewsEv(m);
   else if (m.w === "o") onOcEv("oc", m);
   else if (m.w === "ob") onOcEv("ocb", m);
   else if (m.w === "bi") onOcEv("cbi", m);
@@ -2087,7 +2237,7 @@ const backFrom = k => { if (curPage() && curPage().key === k) back(); };
 const ACT = {
   back: () => { if (!back()) {} },
   go: k => go(k),
-  settings: () => openSettings(),
+  settings: () => { closeDrawer(); openSettings(); },
   login: () => doLogin(),
   lgpw: () => {
     const p = $("#lgPw"), b = $("#lgPwToggle"), show = p.type === "password";
@@ -2124,6 +2274,7 @@ const ACT = {
     try {
       const d = await q(E.p + "_new");
       const pg = ocPage(E.key);
+      pends[E.key] = [];
       if (pg) { pg.data = d; pg.stick = true; draw(pg); }
       if (a === "back") backFrom(E.sess);
     } catch (e) { hint(e.message); }
@@ -2133,7 +2284,8 @@ const ACT = {
     try {
       const d = await q(E.p + "_switch", { sid });
       const pg = ocPage(E.key);
-      if (pg) { pg.data = d; pg.stick = true; draw(pg); }
+      pends[E.key] = [];
+      if (pg) { pg.req = (pg.req || 0) + 1; pg.data = d; pg.stick = true; draw(pg); }
       backFrom(E.sess);
     } catch (e) { hint(e.message); }
   },
@@ -2141,11 +2293,11 @@ const ACT = {
   ocmodel: () => openOcModels(),
   xymodels: () => openXyModels(),
   async xypick(k) {
-    try { await hxq("set_model", { m: k }); closeSheet(); }
+    try { await hxq("set_model", { m: k }); openXyModels(); }
     catch (e) { hint(e.message); }
   },
   async xythink(k) {
-    try { await hxq("thinking", { e: k === "1" }); hint(k === "1" ? "已开思考" : "思考关了"); openXyModels(); }
+    try { await hxq("thinking", { e: k === "1" }); openXyModels(); }
     catch (e) { hint(e.message); }
   },
   async ocmodelpick(k) {
@@ -2193,6 +2345,7 @@ const ACT = {
     try {
       const d = await q("c_new");
       const pg = claudePage();
+      pends.claude = [];
       if (pg) { pg.data = d; pg.stick = true; draw(pg); }
       if (a === "back") backFrom("csess");
     } catch (e) { hint(e.message); }
@@ -2201,7 +2354,8 @@ const ACT = {
     try {
       const d = await q("c_switch", { sid });
       const pg = claudePage();
-      if (pg) { pg.data = d; pg.stick = true; draw(pg); }
+      pends.claude = [];
+      if (pg) { pg.req = (pg.req || 0) + 1; pg.data = d; pg.stick = true; draw(pg); }
       backFrom("csess");
     } catch (e) { hint(e.message); }
   },
@@ -2233,6 +2387,7 @@ const ACT = {
     } catch (e) { hint(e.message); }
   },
   nitem: k => go("newsItem", { k: +k }),
+  nlink: () => { const pg = curPage(), d = pg && pg.data; if (d && d.url) brOpen(d.url, "news"); },   // 原文用 App 内浏览器看，日报的链接共用一个标签（2026-11-11）
   async nplay(k) { try { await q("news_play", { k: +k }); } catch (e) { hint(e.message); } },
   async nsay(k) { try { await q("news_say", { k: +k }); } catch (e) { hint(e.message); } },
   async nresume() { const pg = curPage(); if (pg && pg.data && pg.data.last) ACT.nplay(pg.data.last - 1); },
@@ -2245,17 +2400,24 @@ const ACT = {
   memed: a => { const [t, k] = a.split(":"); openMemEdit(t, k); },
   async memsave() {
     const c = memCtx, text = $("#memText").value.trim();
-    if (!c || !text) return;
+    if (!c) return;
+    if (!text) { hint("内容不能为空"); return; }
     try {
       const d = await hxq("memory_edit", c.old ? { action: "replace", target: c.t, old_text: c.old, content: text } : { action: "add", target: c.t, content: text });
       closeSheet(); c.pg.data = d; draw(c.pg);
     } catch (e) { hint(e.message); }
   },
-  async memdel() {
+  async memdel(_, t) {
     const c = memCtx;
     if (!c || !c.old) return;
+    if (!t._arm) {                                   // 两步：3 秒内再点一次才真删
+      t._arm = setTimeout(() => { t._arm = 0; t.textContent = "删除"; }, 3000);
+      t.textContent = "再点一次，确认删除";
+      return;
+    }
+    clearTimeout(t._arm); t._arm = 0;
     try { const d = await hxq("memory_edit", { action: "remove", target: c.t, old_text: c.old }); closeSheet(); c.pg.data = d; draw(c.pg); }
-    catch (e) { hint(e.message); }
+    catch (e) { t.textContent = "删除"; hint(e.message); }
   },
   skview: name => go("xyskill", { name }),
   async sktog(name, t) {
@@ -2265,32 +2427,49 @@ const ACT = {
     catch (e) { t.classList.toggle("on", !on); hint(e.message); }
   },
   cronopen: k => openCron(k),
-  async cron(a) {
+  async cron(a, t) {
     const [action, id] = a.split(":"), pg = curPage();
+    if (action === "remove") {                       // 两步：3 秒内再点一次才真删
+      if (!t._arm) {
+        t._arm = setTimeout(() => { t._arm = 0; t.textContent = "删除"; }, 3000);
+        t.textContent = "再点一次，确认删除";
+        return;
+      }
+      clearTimeout(t._arm); t._arm = 0;
+    }
+    const sw = (action === "pause" || action === "resume") && t && t.classList.contains("sw");
+    const on = action === "resume";
+    if (sw) { if (t.disabled) return; t.disabled = true; t.classList.toggle("on", on); }
     try {
       pg.data = Object.assign(await hxq("cron", { action, id }), { log: pg.data && pg.data.log });
       closeSheet(); draw(pg);
-    } catch (e) { hint(e.message); }
+    } catch (e) {
+      if (sw) { t.classList.toggle("on", !on); t.disabled = false; }
+      if (action === "remove") t.textContent = "删除";
+      hint(e.message);
+    }
   },
   sessopen: sid => {
     const pg = curPage(), r = pg.data && pg.data.sessions.find(x => x.sid === sid);
     go("xysessView", { sid, title: r ? r.title || r.snip : "", cur: r && r.cur });
   },
-  sessq: () => { const pg = curPage(); if (pg && pg.key === "xysess") { pg.p.q = $("#sessQ").value.trim(); pg.data = null; draw(pg); pg.def.load(pg); } },
+  sessq: () => { const pg = curPage(), i = pg && pg.el.querySelector("#sessQ"); if (i) { pg.p.q = i.value.trim(); pg.data = null; draw(pg); pg.def.load(pg); } },
   async sessresume(sid) {
     try {
       await hxq("resume", { sid });
       const xi = stack.findIndex(p => p.key === "home");           // 回到小芽页：中间的历史列表悄悄丢掉
-      while (xi >= 0 && stack.length > xi + 2) stack.splice(xi + 1, 1)[0].el.remove();
+      while (xi >= 0 && stack.length > xi + 2) disposePage(stack.splice(xi + 1, 1)[0]);
       popPage();
       Object.assign(hx, { msgs: null }); hxRedraw(true);
       setTimeout(hxLoad, 1500);
     } catch (e) { hint(e.message); }
   },
-  async hxnew() {
+  async hxnew(a) {
     closeSheet();
-    try { await q("hx", { hop: "new_session", a: {} }); Object.assign(hx, { msgs: [], busy: false }); hxRedraw(true); setTimeout(hxLoad, 1500); }
-    catch (e) { hint(e.message); }
+    try {
+      await q("hx", { hop: "new_session", a: {} }); Object.assign(hx, { msgs: [], busy: false }); hxRedraw(true); setTimeout(hxLoad, 1500);
+      if (a === "back") backFrom("xysess");
+    } catch (e) { hint(e.message); }
   },
   async hxok(choice) {
     const a = hx.msgs && [...hx.msgs].reverse().find(x => x.r === "ask" && x.live);
@@ -2309,7 +2488,7 @@ const ACT = {
       const f = await q("hx", { hop: "file", a: { path: it.path } });
       if (j != null) Object.assign(it, f); else m.f = f;
       hxRedraw();
-      if (f.kind === "image") { const v = $("#viewer"); v.querySelector("img").src = fileUrl(f.id); v.classList.add("on"); }
+      if (f.kind === "image") vwOpen(fileUrl(f.id));
     } catch (e) { hint(e.message); }
   },
   xymin: () => xyMin(),
@@ -2330,7 +2509,7 @@ const ACT = {
     if (m.t === "d") go("files", { path: p }); else go("fileView", { path: p, size: m.size, mtime: m.mtime });
   },
   fpath: (p, t) => { if (p) go("fileView", { path: p, size: +t.dataset.size || 0, mtime: +t.dataset.mtime || 0 }); },   // AI 发来的文件卡片：直接打开看
-  img: (_, t) => { const v = $("#viewer"); v.querySelector("img").src = t.src; v.classList.add("on"); },
+  img: (_, t) => vwOpen(t.src),
   copycode: (_, t) => copy(t.parentNode.querySelector("code").textContent),   // 点按本身震一下，不弹「已复制」
   saveSettings: () => saveSettings(),
   closeSheet: () => closeSheet(),
@@ -2379,7 +2558,8 @@ const ACT = {
   fstail: () => fsLoadText(curPage(), true),
   sysgo: i => { const pg = curPage(), x = pg && pg.data && pg.data.list && pg.data.list[+i]; if (x) go("sysView", { mount: x.mount, path: x.path, name: x.name }); },
   sysout: () => { const pg = curPage(); if (pg) brOpen(sysUrl(pg.p)); },   // 用 App 内浏览器打开（有地址栏、能切电脑版）；没有浏览器模块就交系统浏览器
-  reload: () => { const pg = curPage(); if (pg && pg.def.load) { pg.el.innerHTML = LOADING; pg.def.load(pg); } },
+  reload: () => { const pg = curPage(); if (pg && pg.def.load) { if (!pg.data) pg.el.innerHTML = LOADING; pg.def.load(pg); } },
+  hxretry: () => { hx.err = ""; hxRedraw(); hxLoad(); },
   spstop: () => spStop(true),
 };
 
@@ -2417,13 +2597,13 @@ const brCur = () => BR.tabs[BR.cur];
 const brByWid = id => BR.tabs.find(t => t.wid === id);
 const brHost = u => { try { return new URL(u).host.replace(/^www\./, ""); } catch (e) { return u; } };
 const isLoopback = h => /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/.test(h);
-function brSave() { store("br_state", JSON.stringify({ tabs: BR.tabs.map(t => ({ u: t.url, t: t.title, d: t.desk })), cur: BR.cur })); }
+function brSave() { store("br_state", JSON.stringify({ tabs: BR.tabs.map(t => ({ u: t.url, t: t.title, d: t.desk, s: t.slot || "" })), cur: BR.cur })); }
 function brEnsure() {                                // 第一次用：读回上次的标签、挂上插件事件
   if (BR.ready) return;
   BR.ready = true;
   const d = brJson("br_state", null);
   if (d && Array.isArray(d.tabs)) {
-    BR.tabs = d.tabs.slice(0, BR_MAX).map(x => Object.assign(brNewTab(x.u, x.d), { title: x.t || "" }));
+    BR.tabs = d.tabs.slice(0, BR_MAX).map(x => Object.assign(brNewTab(x.u, x.d), { title: x.t || "", slot: x.s || "" }));
     BR.cur = Math.max(0, Math.min(d.cur || 0, BR.tabs.length - 1));
   }
   if (!BR.tabs.length) BR.tabs.push(brNewTab(""));
@@ -2461,19 +2641,30 @@ async function brResolve(input) {                    // 输入 → 真正要加�
   } catch (e) { /* 不是标准网址：原样 */ }
   return url;
 }
+// 让这个标签换到新地址。原生 WebView 活着就 setUrl，只改 t.url 它不会动（页面还是旧的）；电脑版标识变了要重开，由 brSync 按 t.url 开
+function brNav(t, url, desk) {
+  t.url = url; t.title = ""; t.shot = ""; t.err = false; t.used = Date.now();
+  if (t.wid && !!t.desk === desk) { IAB.setUrl({ id: t.wid, url }).catch(e => brFail(e)); return; }
+  if (t.wid) { IAB.close({ id: t.wid }).catch(() => {}); t.wid = null; t.vis = false; t.dim = ""; }
+  t.desk = desk;
+}
 // 对外入口：聊天里的外链、系统页「用浏览器打开」都走这里。没有浏览器模块就交系统浏览器
+// newTab 传字符串（如 "news"）= 这个来源专用一个标签：已经有了就切过去、换成这次的链接，不再一个链接开一个标签（2026-11-11 用户：日报原文）
 async function brOpen(url, newTab, inj) {
   if (!IAB || BR.broken) { window.open(url, "_blank"); return; }
   brEnsure();
   url = await brResolve(url);
   if (!url) return;
   let t = brCur();
-  if (newTab !== false && !(t && !t.url)) {          // 当前是空白标签就直接用，不然新开一个；满了就顶掉当前这个
+  const slot = typeof newTab === "string" ? newTab : "", own = slot && BR.tabs.find(x => x.slot === slot);
+  if (own) { t = own; BR.cur = BR.tabs.indexOf(own); }
+  else if (newTab !== false && !(t && !t.url)) {     // 当前是空白标签就直接用，不然新开一个；满了就顶掉当前这个
     if (BR.tabs.length >= BR_MAX) hint("标签页满了（最多 " + BR_MAX + " 个），在当前标签里打开");
     else { t = brNewTab(); BR.tabs.push(t); BR.cur = BR.tabs.length - 1; }
   }
-  t.url = url; t.title = ""; t.err = false; t.used = Date.now(); t.desk = brIsSys(url) || !!inj;
+  if (slot) t.slot = slot;
   t.inj = inj ? Object.assign({ until: Date.now() + 30000 }, inj) : null;
+  brNav(t, url, brIsSys(url) || !!inj);
   BR.mode = ""; brFullOff();
   brSave();
   const pg = curPage();
@@ -2574,6 +2765,7 @@ function brRect() {
   return r;
 }
 function brWant() {                                  // 原生 WebView 此刻该不该露出来：当前页是浏览器、没有任何东西盖在上面
+  if (Date.now() < (BR.hold || 0)) return false;
   const pg = curPage();
   return !!pg && pg.key === "browser" && !BR.mode && !dwOn && !sheetKind && $("#xy").hidden && !popCtx && !slideEnd && $("#login").hidden && !$("#viewer").classList.contains("on");
 }
@@ -2661,7 +2853,7 @@ function brStartHtml() {
 }
 function brHtml() {
   const t = brCur(), tabs = BR.mode === "tabs";
-  const view = tabs ? brTabsHtml() : !t.url ? brStartHtml() : t.err ? `<div class="br-err">${emptyHtml("globe", "页面没打开", "网址可能不对，或者这个网站现在连不上；点下面的刷新再试")}</div>` : "";
+  const view = tabs ? brTabsHtml() : !t.url ? brStartHtml() : t.err ? `<div class="br-err">${emptyHtml("globe", "页面没打开", "网址可能不对，或者这个网站现在连不上；点右上角的刷新再试")}</div>` : "";
   const btn = (act, ic, cls, label) => `<button class="br-btn ${cls || ""}" data-act="${act}" aria-label="${label}">${ico(ic)}</button>`;
   const full = !!BR.full && BR.full === t.k;
   return `<div class="br${full ? " full" : ""}"${full ? ' data-act="brfulloff"' : ""}><div class="br-top">${tabs ? `<div class="br-title">${BR.tabs.length} 个标签页</div>` :
@@ -2753,13 +2945,9 @@ document.addEventListener("pointerdown", e => {      // 联想：按下就办（
 async function brGoto(input) {
   const url = await brResolve(input);
   if (!url) return;
-  const t = brCur();
-  t.url = url; t.err = false; t.title = ""; t.shot = ""; t.used = Date.now();
-  const desk = brIsSys(url);
+  brNav(brCur(), url, brIsSys(url));
   BR.mode = "";
   const pg = curPage();
-  if (t.wid && !!t.desk === desk) { IAB.setUrl({ id: t.wid, url }).catch(e => brFail(e)); }
-  else { if (t.wid) { IAB.close({ id: t.wid }).catch(() => {}); t.wid = null; t.vis = false; t.dim = ""; } t.desk = desk; }
   brSave();
   if (pg && pg.key === "browser") { draw(pg); brSync(); }
 }
@@ -2807,7 +2995,7 @@ Object.assign(ACT, {
     brPageGo(pg => draw(pg));
   },
   brfull: () => { closeSheet(); const t = brCur(); if (t && t.url) brFull(t, true); },       // 浏览器自带的全屏，任何网页都能用，不靠网页配合
-  brclose: () => { if (!back()) { /* 栈底没有可退的（不会发生：浏览器总在 Claude 上面） */ } },
+  brclose: () => { const pg = curPage(); if (pg && pg.sec) goSection("claude"); else back(); },
   brmenu: () => { BR.clearArm = false; brMenu(); },
   brdesk: () => {                                    // 电脑版 ⇄ 手机版：换浏览器标识要重开原生 WebView（地址留着）
     closeSheet();
@@ -2852,11 +3040,23 @@ Object.assign(ACT, {
 });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
-  if ($("#viewer").classList.contains("on")) $("#viewer").classList.remove("on");
+  if ($("#viewer").classList.contains("on")) { if ($("#viewer").classList.contains("menu")) vwMenu(false); else vwClose(); }
   else if (popCtx) closePop();
   else if (sheetKind) closeSheet();
   else if (dwOn) closeDrawer();
-  else back();
+  else if (!(WIDE && curPage() && curPage().sec)) back();           // 宽屏一级页上 Esc 不用做什么（侧栏一直在）
+});
+// 电脑快捷键（宽屏 + 鼠标键盘）：/ 或 Ctrl+L 回到输入框，Alt+1…9 跳侧栏第 N 项，Alt+← 返回。在输入框里打字时只认 Ctrl+L / Alt+…
+document.addEventListener("keydown", e => {
+  if (!WIDE || !FINE_MQ.matches || e.isComposing || e.keyCode === 229) return;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+  if ((e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l")) {
+    const ta = document.querySelector("#bar .cmp-in");
+    if (ta && $("#bar").dataset.kind === "composer") { e.preventDefault(); cmpMain.setMore(false); if (cmpMain.mode !== "text") ta.closest(".cmp").querySelector(".cmp-mode").click(); else ta.focus(); }
+  } else if (e.altKey && !e.ctrlKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
+    const r = document.querySelectorAll("#dwPanel .dw-list .row")[+e.key - 1];
+    if (r) { e.preventDefault(); r.click(); }
+  } else if (e.altKey && e.key === "ArrowLeft" && !typing) { e.preventDefault(); back(); }
 });
 document.addEventListener("keydown", e => {               // 历史对话的搜索框：回车搜
   if (e.target && e.target.id === "sessQ" && e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); ACT.sessq(); e.target.blur(); }
@@ -2898,20 +3098,171 @@ document.addEventListener("click", e => {
   document.addEventListener("pointermove", e => { if (t && Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) > 10) clear(); }, { passive: true });
   document.addEventListener("pointerup", clear);
   document.addEventListener("pointercancel", clear);
-  document.addEventListener("contextmenu", e => { if (!e.target.closest("textarea, input")) e.preventDefault(); });
+  document.addEventListener("contextmenu", e => {
+    const b = WIDE && e.target.closest && e.target.closest(".bub[data-i]");
+    if (b && !e.target.closest("a, button, img")) { e.preventDefault(); openPop(b); return; }      // 电脑：右键气泡 = 长按菜单（有选中的字就复制选中的）
+    if (!e.target.closest("textarea, input, .sel-text")) e.preventDefault();
+  });   // 安卓长按选字先发 contextmenu，拦了就选不了
 })();
-$("#viewer").addEventListener("click", () => $("#viewer").classList.remove("on"));
-
-function copy(text) {
-  try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).catch(() => copyOld(text)); return; } } catch (e) { /* 走老办法 */ }
-  copyOld(text);
+// ---------------------------------------------------------------- 看大图（2026-11-13 用户：不能缩放、拖动，大图只看得到一部分，不能长按保存）
+// 双指缩放 / 双击放大缩回 / 电脑滚轮缩放，放大了或长图就拖着看；长图（比屏幕细长得多）先按屏宽铺满、从顶上看起（跟微信一样）；点一下关。
+// 长按（电脑右键）出「保存图片」：电脑版 / 网页版直接下载（电脑弹「另存为」）；手机现在的安装包没有「存到相册」的权限说明
+// （iOS 写相册缺 NSPhotoLibraryAddUsageDescription 会闪退），先交给系统浏览器打开再长按存；iOS 安装包 v8 起改用系统自己的长按菜单「存储到照片」
+const VW = { el: $("#viewer"), img: $("#viewer img"), nw: 1, nh: 1, k: 1, x: 0, y: 0, k1: 1, kMin: 1, kMax: 4, pts: new Map(), g: null, lastTap: null, tapTm: 0, lpTm: 0 };
+const vwNative = () => PLATFORM === "ios" && !!Link && window.SHELL_V >= 8;
+VW.img.draggable = false;
+VW.el.insertAdjacentHTML("beforeend", '<div class="vw-tip"></div><div class="vw-menu"><button data-vw="save">保存图片</button><button data-vw="cancel">取消</button></div>');
+function vwOpen(src) {
+  clearTimeout(VW.tapTm); vwMenu(false); vwTip("");
+  VW.el.classList.toggle("nsave", vwNative());
+  VW.img.style.opacity = 0;
+  if (VW.img.getAttribute("src") !== src) { VW.bad = false; VW.img.src = src; }
+  if (VW.img.complete) { if (VW.bad) vwTip("图片打不开"); else vwReset(); }     // 同一张、已经读好了：不会再来 load
+  VW.el.classList.add("on");
 }
-function copyOld(text) {
-  const ta = document.createElement("textarea");
-  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-  document.body.appendChild(ta); ta.select();
-  try { document.execCommand("copy"); } catch (e) { /* 复制不了 */ }
+function vwClose() { clearTimeout(VW.tapTm); clearTimeout(VW.lpTm); vwMenu(false); VW.el.classList.remove("on"); }
+function vwReset() {                                   // 按屏幕重新摆：一般的整张放进屏幕（小图不放大），长图按屏宽、从顶上看
+  const W = innerWidth, H = innerHeight, nw = VW.nw = VW.img.naturalWidth || 300, nh = VW.nh = VW.img.naturalHeight || 150;   // 没有固有尺寸的 SVG 按 300×150
+  VW.kMin = Math.min(W / nw, H / nh, 1);
+  VW.k1 = nh / nw > H / W * 1.6 ? Math.min(W / nw, 1) : VW.kMin;
+  VW.kMax = Math.max(VW.k1 * 4, 2);
+  VW.k = VW.k1; VW.x = 0; VW.y = 0;
+  vwDraw(false);
+  VW.img.style.opacity = 1;
+}
+function vwDraw(anim) {
+  const W = innerWidth, H = innerHeight, w = VW.nw * VW.k, h = VW.nh * VW.k;
+  VW.x = w <= W ? (W - w) / 2 : Math.min(0, Math.max(W - w, VW.x));
+  VW.y = h <= H ? (H - h) / 2 : Math.min(0, Math.max(H - h, VW.y));
+  VW.img.classList.toggle("anim", !!anim);
+  Object.assign(VW.img.style, { width: w + "px", height: h + "px", left: VW.x + "px", top: VW.y + "px" });
+}
+function vwZoomAt(cx, cy, k, anim) {                  // 缩放时手指 / 鼠标底下那一点不动
+  k = Math.max(VW.kMin, Math.min(VW.kMax, k));
+  VW.x = cx - (cx - VW.x) / VW.k * k; VW.y = cy - (cy - VW.y) / VW.k * k; VW.k = k;
+  vwDraw(anim);
+}
+function vwTip(t) { const e = VW.el.querySelector(".vw-tip"); e.textContent = t; e.classList.toggle("on", !!t); if (t) { clearTimeout(e._tm); e._tm = setTimeout(() => e.classList.remove("on"), 5000); } }
+function vwMenu(on) {
+  if (on && (VW.el.classList.contains("menu") || !VW.img.complete || VW.img.style.opacity === "0")) return;
+  VW.el.classList.toggle("menu", !!on);
+  if (on) { hap("medium"); clearTimeout(VW.tapTm); VW.lastTap = null; }
+}
+function vwName(src, type) {
+  let n = "";
+  try { const u = new URL(src); n = u.pathname.startsWith("/app/fs/") ? decodeURIComponent(u.pathname.split("/").pop()) : (u.searchParams.get("id") || "").split("/").pop(); } catch (e) { /* 用默认名 */ }
+  return /\.[a-z0-9]{2,5}$/i.test(n) ? n : "小芽图片." + ((/image\/(\w+)/.exec(type || "") || [])[1] || "jpg").replace("jpeg", "jpg");
+}
+async function vwSave() {
+  vwMenu(false);
+  const src = VW.img.src;
+  if (Link) { window.open(src, "_blank"); vwTip(PLATFORM === "ios" ? "已用 Safari 打开，在那边长按图片点「存储到照片」" : "已用浏览器打开，在那边长按图片保存"); return; }
+  try {                                                // 电脑版 / 网页版：读成 blob 再下载（跨域地址 download 属性不生效）
+    const r = await fetch(src);
+    if (!r.ok) throw new Error("服务器回 " + r.status);
+    const b = await r.blob(), u = URL.createObjectURL(b), a = document.createElement("a");
+    a.href = u; a.download = vwName(src, b.type);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 60000);
+  } catch (e) { vwTip("没保存成：" + (e.message || e)); }
+}
+VW.img.addEventListener("load", () => { VW.bad = false; if (VW.el.classList.contains("on")) vwReset(); });
+VW.img.addEventListener("error", () => { VW.bad = true; if (VW.el.classList.contains("on")) vwTip("图片打不开"); });
+addEventListener("resize", () => { if (VW.el.classList.contains("on") && VW.img.complete && !VW.bad) vwReset(); });
+VW.el.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.classList.contains("vw-x")) vwClose();
+  else if (b.dataset.vw === "save") vwSave();
+  else if (b.dataset.vw === "cancel") vwMenu(false);
+});
+VW.el.addEventListener("pointerdown", e => {
+  if (e.target.closest("button") || e.button > 0) return;
+  if (VW.el.classList.contains("menu")) { vwMenu(false); VW.g = { skip: true }; return; }     // 菜单开着点空白 = 收菜单，不关大图
+  VW.el.setPointerCapture(e.pointerId);
+  VW.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  clearTimeout(VW.lpTm);
+  if (VW.pts.size === 1) {
+    VW.g = { t: "pan", sx: e.clientX, sy: e.clientY, x0: VW.x, y0: VW.y, t0: Date.now(), moved: false };
+    if (!vwNative()) VW.lpTm = setTimeout(() => { if (VW.g && VW.g.t === "pan" && !VW.g.moved) { VW.g.skip = true; vwMenu(true); } }, 500);
+  } else if (VW.pts.size === 2) {
+    const [a, b] = [...VW.pts.values()];
+    VW.g = { t: "pinch", d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, k0: VW.k, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, x0: VW.x, y0: VW.y };
+  }
+});
+VW.el.addEventListener("pointermove", e => {
+  if (!VW.pts.has(e.pointerId) || !VW.g || VW.g.skip) return;
+  VW.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const g = VW.g;
+  if (g.t === "pan") {
+    if (!g.moved && Math.abs(e.clientX - g.sx) + Math.abs(e.clientY - g.sy) < 8) return;
+    g.moved = true; clearTimeout(VW.lpTm);
+    VW.x = g.x0 + e.clientX - g.sx; VW.y = g.y0 + e.clientY - g.sy; vwDraw(false);
+  } else if (g.t === "pinch" && VW.pts.size >= 2) {
+    const [a, b] = [...VW.pts.values()], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const k = Math.max(VW.kMin, Math.min(VW.kMax, g.k0 * Math.hypot(a.x - b.x, a.y - b.y) / g.d0));
+    VW.x = mx - (g.mx - g.x0) / g.k0 * k; VW.y = my - (g.my - g.y0) / g.k0 * k; VW.k = k;     // 两指中点底下那一点跟着手指走
+    vwDraw(false);
+  }
+});
+function vwUp(e) {
+  if (!VW.pts.delete(e.pointerId)) return;
+  clearTimeout(VW.lpTm);
+  const g = VW.g;
+  if (!g) return;
+  if (VW.pts.size === 1 && g.t === "pinch") {          // 双指松开一根：剩下那根接着拖
+    const [p] = [...VW.pts.values()];
+    VW.g = { t: "pan", sx: p.x, sy: p.y, x0: VW.x, y0: VW.y, t0: 0, moved: true };
+    return;
+  }
+  if (VW.pts.size) return;
+  VW.g = null;
+  if (g.skip || g.t !== "pan" || g.moved || e.type === "pointercancel" || Date.now() - g.t0 > 400) return;
+  const L = VW.lastTap, x = e.clientX, y = e.clientY;
+  if (L && Date.now() - L.t < 300 && Math.abs(x - L.x) + Math.abs(y - L.y) < 40) {     // 双击：放大到这一点 / 缩回
+    clearTimeout(VW.tapTm); VW.lastTap = null;
+    if (VW.k > VW.k1 * 1.05) { VW.k = VW.k1; VW.y = 0; vwDraw(true); }
+    else vwZoomAt(x, y, Math.max(VW.k1 * 2.5, VW.kMin * 2.5), true);
+    return;
+  }
+  VW.lastTap = { t: Date.now(), x, y };
+  VW.tapTm = setTimeout(vwClose, 300);                 // 单击关；等一下看是不是双击
+}
+VW.el.addEventListener("pointerup", vwUp);
+VW.el.addEventListener("pointercancel", vwUp);
+VW.el.addEventListener("wheel", e => {                // 电脑：长图 / 放大了滚轮上下看，Ctrl+滚轮或整张放得下时滚轮缩放
+  e.preventDefault();
+  if (VW.el.classList.contains("menu")) return;
+  if (!e.ctrlKey && VW.nh * VW.k > innerHeight + 1) { VW.y -= e.deltaY; VW.x -= e.deltaX; vwDraw(false); }
+  else vwZoomAt(e.clientX, e.clientY, VW.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), false);
+}, { passive: false });
+VW.el.addEventListener("contextmenu", e => { if (vwNative()) { e.stopPropagation(); return; } e.preventDefault(); e.stopPropagation(); clearTimeout(VW.lpTm); if (VW.g) VW.g.skip = true; vwMenu(true); });   // 电脑右键、安卓长按
+
+// 2026-11-07 用户：点「复制」没复制上。旧写法等 writeText 被拒才在 promise 回调里走 execCommand，那时点击手势已过期，失败也没任何提示。
+// 现在两条路都在点击当下同步走，两条都没成才报错。iPhone 上到底卡在哪条路还没实锤，每次结果记一行服务日志（grep「copy」）
+// 临时输入框：iOS 要 setSelectionRange 才算选中，readOnly 不弹键盘，全局 user-select:none 这里改回 text
+function copyExec(text) {
+  const had = document.activeElement, ta = document.createElement("textarea");
+  ta.value = text; ta.readOnly = true;
+  ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;-webkit-user-select:text;user-select:text";
+  document.body.appendChild(ta);
+  ta.focus({ preventScroll: true }); ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = ta.selectionEnd > ta.selectionStart && document.execCommand("copy"); } catch (e) { /* 算没成 */ }
   ta.remove();
+  if (had && had !== document.body && had.focus) had.focus({ preventScroll: true });
+  return ok;
+}
+function copy(text) {
+  const ok = copyExec(text);
+  const end = err => {
+    errNote("copy", `exec=${ok} clip=${err || "ok"} secure=${window.isSecureContext}`, "copy");
+    if (!ok && err) hint("复制失败，可以长按消息用「选择文字」");
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => end(), e => end(e.name || e.message || "拒绝"));
+    else end("无此接口");
+  } catch (e) { end(e.name || "异常"); }
 }
 
 // 长按气泡：复制 / 朗读
@@ -2919,6 +3270,7 @@ let popCtx = null, lpTimer = 0, lpX = 0, lpY = 0;
 document.addEventListener("pointerdown", e => {
   const b = e.target.closest(".bub[data-i]");
   if (!b || e.target.closest("a, button, img")) return;
+  if (WIDE && e.pointerType === "mouse") return;      // 电脑：按住拖是选字，菜单走右键（下面 contextmenu）
   lpX = e.clientX; lpY = e.clientY;
   clearTimeout(lpTimer);
   lpTimer = setTimeout(() => openPop(b), 480);
@@ -2931,10 +3283,11 @@ function openPop(b) {
   const text = owner && owner.raw[+b.dataset.i];
   if (text == null) return;
   hap("medium");
-  popCtx = { text, who: b.dataset.who || "", b };
+  const sel = WIDE && b.contains(getSelection().anchorNode) ? getSelection().toString().trim() : "";     // 电脑：气泡里已经选了一段字，「复制」就复制这一段
+  popCtx = { text: sel || text, whole: text, who: b.dataset.who || "", b };
   b.classList.add("held");
   const p = $("#pop");
-  p.innerHTML = `<button data-act="pop:copy">${ico("copy")}<span>复制</span></button>` + (b.dataset.who ? `<button data-act="pop:speak">${ico("speak")}<span>朗读</span></button>` : "");
+  p.innerHTML = `<button data-act="pop:copy">${ico("copy")}<span>${sel ? "复制所选" : "复制"}</span></button>` + (WIDE && FINE_MQ.matches ? "" : `<button data-act="pop:sel">${ico("textSel")}<span>选择文字</span></button>`) + (b.dataset.who ? `<button data-act="pop:speak">${ico("speak")}<span>朗读</span></button>` : "");
   const r = b.getBoundingClientRect();
   p.classList.add("on");
   const w = p.offsetWidth, h = p.offsetHeight;
@@ -2950,6 +3303,7 @@ async function popDo(k) {
   closePop();
   if (!c) return;
   if (k === "copy") copy(c.text);                    // 点「复制」本身震一下，不弹「已复制」
+  if (k === "sel") openSheet("seltext", `<div class="sh-head"><b>选择文字</b><span>长按文字，拖动两端选好范围，再点系统菜单的「拷贝」</span></div><div class="sel-text${c.who ? " md" : " sel-plain"}">${c.who ? md(c.text) : esc(c.text)}</div>`);   // 2026-11-07 用户：只复制一部分。放弹层里选，不和气泡的长按菜单、侧滑返回、流式刷新抢手势
   if (k === "speak") { try { await q("speak", { text: c.text, who: c.who }); } catch (e) { hint(e.message); } }
 }
 
@@ -2963,6 +3317,7 @@ function openSheet(kind, html) {
   $("#scrim").classList.add("on");
 }
 function closeSheet() {
+  if (sheetKind) BR.hold = Date.now() + 460;
   sheetKind = null;
   $("#sheet").classList.remove("on");
   $("#sheet").dataset.kind = "";
@@ -2974,7 +3329,7 @@ $("#scrim").addEventListener("click", closeSheet);
   const sh = $("#sheet");
   let y0 = 0, dy = 0, on = false;
   sh.addEventListener("pointerdown", e => {
-    if (!e.target.closest(".grab, .sh-head")) return;
+    if (WIDE || !e.target.closest(".grab, .sh-head")) return;        // 宽屏弹层是居中对话框，不下拉关闭
     on = true; y0 = e.clientY; dy = 0; sh.classList.add("drag");
     sh.setPointerCapture(e.pointerId);
   });
@@ -2998,7 +3353,7 @@ function qInner(kind) {
   const d = quotaD;
   if (!d) return qRow("额度", "查询中…");
   if (kind === "claude") {
-    const c = d.claude || {}, w = (n, name) => c[n] ? qRow(name, `剩 ${c[n].left}%<i>${c[n].reset} 重置</i>`, c[n].left <= 10) : "";
+    const c = d.claude || {}, w = (n, name) => c[n] ? qRow(name, `剩 ${c[n].left}%<i>${c[n].reset ? c[n].reset + " 重置" : "用了才开始计时"}</i>`, c[n].left <= 10) : "";
     return (w("five", "5 小时内") + w("week", "本周")) + (c.err ? qRow("额度", esc(c.err), true) : "") || qRow("额度", "暂无数据");
   }
   if (kind === "deepseek") {
@@ -3044,7 +3399,9 @@ function quotaUpd() {
 }
 setInterval(() => {
   if (document.hidden || !online) return;
-  if (Date.now() - quotaT > (sheetKind === "model" ? 60e3 : 300e3)) quotaLoad();
+  const c = (quotaD && quotaD.claude) || {}, now = Date.now();
+  if ([c.five, c.week].some(w => w && w.ts && w.ts * 1000 < now && quotaT < w.ts * 1000)) quotaLoad(true);   // 刚过重置时间：马上重取，不等 5 分钟
+  else if (now - quotaT > (sheetKind === "model" ? 60e3 : 300e3)) quotaLoad();
 }, 15000);
 
 async function openModels() {
@@ -3056,13 +3413,13 @@ async function openModels() {
       const cur = d.cur === m.m && m.sub === k;
       return `<button class="row${cur ? " cur" : ""}" data-act="model:${m.m}|${k}"><span class="r-main"><span class="r-t">${esc(m.name)} ${esc(v)}</span></span>${cur ? `<span class="check">${ico("check")}</span>` : ""}</button>`;
     }).join("")}</div>`).join("");
-  } catch (e) { $("#mdlBox").textContent = e.message; }
+  } catch (e) { $("#mdlBox").innerHTML = `<div class="fs-note bad">${esc(e.message)}</div><button class="btn" data-act="cmodel">重试</button>`; }
 }
 
 function openSettings() {
   const sw = (act, on, title, sub) => `<button class="row sw-row" data-act="${act}"><span class="r-main"><span class="r-t">${title}</span><span class="r-s">${sub}</span></span>
     <span class="sw${on ? " on" : ""}"><i></i></span></button>`;
-  const native = !!Link;
+  const desk = !!window.xyDesk, native = !!Link || desk;
   openSheet("settings", `<div class="sh-head"><b>设置</b><span class="conn-t"></span></div>
     <div class="group"><div class="row"><span class="r-main"><span class="r-t">${esc(cfg.user || "未登录")}</span><span class="r-s">账号 · 这台是 ${esc(DEV_LABEL)}</span></span>
       <button class="chip" data-act="pwopen">改密码</button><button class="chip danger" data-act="logout">退出</button></div>
@@ -3070,19 +3427,19 @@ function openSettings() {
         <input id="pwNew" type="password" placeholder="新密码（至少 6 位）" autocomplete="new-password"><button class="btn primary" data-act="pwsave">保存</button></div></div>
     <div class="group">${sw("artog", autoRead, "自动朗读", "小芽、小智的回复自己念出来（小芽通话里也是）；首页右上角的喇叭也能开关")}</div>
     <div class="group${native ? "" : " dim"}">` +
-      sw("bgtog", bgOn, "后台运行", native ? "锁屏、切到别的 App 时，小芽通话和 Claude 干活照常进行" : "要装新安装包才有") +
-      sw("notetog", noteOn, "通知", native ? "在后台时，Claude 做完、小芽小智回话会弹通知" : "要装新安装包才有") + `</div>
+      sw("bgtog", bgOn, "后台运行", desk ? "点窗口右上角 ✕ 缩到右下角托盘继续跑（通话、Claude 干活、定时提醒照常），托盘图标右键才退出" : native ? "锁屏、切到别的 App 时，小芽通话和 Claude 干活照常进行" : "要装新安装包才有") +
+      sw("notetog", noteOn, "通知", desk ? "窗口不在最前面时，Claude 做完、小芽小智回话、定时提醒会弹 Windows 通知" : native ? "在后台时，Claude 做完、小芽小智回话会弹通知" : "要装新安装包才有") + `</div>
     <div class="group"><button class="row" data-act="go:uplog"><span class="r-main"><span class="r-t">更新记录</span><span class="r-s">每次更新改了什么（git 提交）、现在的版本、怎么更新</span></span><span class="chev">${ico("chev")}</span></button></div>
     <div class="sh-sec">服务器地址（一行一个，连不上按顺序换下一个）</div>
     <div class="field"><textarea id="sServers" rows="2" spellcheck="false"></textarea></div>
     <button class="btn" style="width:100%" data-act="saveSettings">保存并重连</button>
-    <div class="meta">设备号 ${esc(DEV_ID)} · 界面 ${esc(window.UI_VER || "开发版")}（${esc(window.UI_FROM || "内置")}）· 安装包 v${window.SHELL_V || 1}${native ? "" : "（没有原生模块）"}</div>`);
+    <div class="meta">设备号 ${esc(DEV_ID)} · 界面 ${esc(window.UI_VER || "开发版")}（${esc(window.UI_FROM || "内置")}）· ${desk ? "电脑版壳 v" + esc(window.xyDesk.ver) : "安装包 v" + (window.SHELL_V || 1) + (native ? "" : "（网页版）")}</div>`);
   $("#sServers").value = cfg.servers.join("\n");
   updConn();
 }
 function saveSettings() {
   const s = $("#sServers").value.split(/\s+/).filter(Boolean);
-  if (!s.length) return;
+  if (!s.length) { hint("至少填一个服务器地址"); return; }
   cfg.servers = s;
   saveCfg();
   closeSheet();
@@ -3091,11 +3448,297 @@ function saveSettings() {
   connect();
 }
 
+// ---------------------------------------------------------------- 发现（2026-11-07）：竖着滑刷 GitHub 好项目，后台在 discover.py
+// 整页一列帖子，自由滚动（2026-11-08 用户嫌图占太多、字小、侧边按钮看不清，改成 ins / 小红书的样子）：头部、矮图、一排按钮、大字正文。只有第一批走 draw，后面的追加到末尾，不重画（重画图会闪、动图会重播）。
+// 滑过去算看过（dc_seen，以后不再出现）。图只留当前前后几张：几十张动图都留着手机内存吃不消。
+const DC_LANG = { Python: "#2f6ea5", TypeScript: "#2b6cb0", JavaScript: "#a8860b", Rust: "#a0522d", Go: "#0e7c9a", Swift: "#d9480f", "C++": "#b83280", C: "#4a5568",
+  Java: "#9c5a14", Kotlin: "#6b46c1", Ruby: "#9b1c1c", PHP: "#4c51bf", Shell: "#3f7d20", HTML: "#c0392b", CSS: "#5b3fa0", Zig: "#b7791f", "C#": "#1e7a3c" };
+function dcTone(lang) {
+  if (DC_LANG[lang]) return DC_LANG[lang];
+  const h = [...String(lang || "?")].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+  return `hsl(${h},45%,38%)`;
+}
+const dcImg = id => `http://${host()}/app/dimg?key=${encodeURIComponent(cfg.token)}&id=${encodeURIComponent(id)}`;
+const dcNum = n => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n || 0);
+const dcBtn = (act, icon, label, on) => `<button class="dc-btn${on ? " on" : ""}" data-act="${act}">${ico(icon)}<span>${label}</span></button>`;
+function dcCardHtml(c, i) {
+  const [owner, name] = c.repo.split("/");
+  return `<article class="dc-card" data-i="${i}" style="--t:${dcTone(c.lang)}"><div class="dc-head"><span class="dc-ava">${esc(owner[0].toUpperCase())}</span><div class="dc-who"><b>${esc(name)}</b><span>${esc(owner)}</span></div></div>` +
+    `<div class="dc-media" data-act="dcdetail"><div class="dc-poster"><b>${esc(name)}</b></div>${c.img ? `<img data-src="${esc(dcImg(c.img))}" alt="" draggable="false">` : ""}</div><div class="dc-rail">` +
+    dcBtn("dcfav", "bookmark", "收藏", c.fav) + dcBtn("dcstar", "star", "Star", c.star) +
+    dcBtn("dcask", "claude", "问 Claude", !!c.asked) + dcBtn("dcopen", "globe", "打开") + "</div>" +
+    `<div class="dc-tip">已派给 Claude，再点一次「问 Claude」查看</div><div class="dc-err" hidden></div><div class="dc-info" data-act="dcdetail">${c.one ? `<div class="dc-one">${esc(c.one)}</div>` : ""}` +
+    (c.pts.length ? `<ul class="dc-pts">${c.pts.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : "") +
+    `<div class="dc-meta">${c.lang ? `<span>${esc(c.lang)}</span>` : ""}<span>★ ${dcNum(c.stars)}</span>${c.gain ? `<span>${esc(c.gainp)} +${dcNum(c.gain)}</span>` : ""}</div>` +
+    `<button class="dc-url" data-act="dcopen">github.com/${esc(c.repo)}</button></div></article>`;
+}
+const dcEndHtml = () => `<article class="dc-card dc-end">${emptyHtml("compass", "今天刷完了", "明天有新的项目")}<button class="btn" data-act="reload">再看看有没有新的</button></article>`;
+function dcMedia(pg) {                               // 当前卡前后的图才放地址，离远了收回
+  const at = pg.data.at, cards = pg.el.children;
+  for (let k = Math.max(0, at - 1); k <= at + 2 && k < cards.length; k++) {
+    const img = cards[k].querySelector("img[data-src]");
+    if (img && !img.src) img.src = img.dataset.src;
+  }
+  pg.el.querySelectorAll("img[src]").forEach(img => { if (Math.abs(+img.closest(".dc-card").dataset.i - at) > 4) img.removeAttribute("src"); });
+}
+async function dcMore(pg) {
+  const d = pg.data;
+  d.busy = true;
+  try {
+    const r = await q("dc_feed", { skip: d.cards.slice(Math.max(0, d.max - 5)).map(c => c.repo) });    // 刚滑过的几张，dc_seen 可能还在路上，别再发回来
+    if (pg.data !== d) return;
+    const n = d.cards.length;
+    d.cards.push(...r.cards);
+    d.done = !r.cards.length;
+    pg.el.insertAdjacentHTML("beforeend", r.cards.map((c, k) => dcCardHtml(c, n + k)).join("") + (d.done ? dcEndHtml() : ""));
+    dcMedia(pg);
+  } catch (e) { /* 没连上：下次滑动再取 */ }
+  d.busy = false;
+}
+const dcView = c => { if (c) q("dc_view", { repo: c.repo }).catch(() => {}); };     // 卡片上了屏幕就进浏览记录
+function dcScroll(pg) {
+  const d = pg.data, cards = pg.el.children;
+  if (!d || !cards.length || !cards[0].classList.contains("dc-card")) return;
+  const mid = pg.el.scrollTop + pg.el.clientHeight / 2;     // 卡片高矮不一：屏幕正中那张算当前
+  let i = d.at;
+  while (i + 1 < d.cards.length && cards[i + 1].offsetTop <= mid) i++;
+  while (i > 0 && cards[i].offsetTop > mid) i--;
+  if (i === d.at) return;
+  d.at = i;
+  dcView(d.cards[i]);
+  while (d.max < i && d.max < d.cards.length) q("dc_seen", { repo: d.cards[d.max++].repo }).catch(() => {});
+  dcMedia(pg);
+  if (d.cards.length - i <= 3 && !d.busy && !d.done) dcMore(pg);
+}
+const dcImgErr = e => { if (e.target.tagName === "IMG") e.target.remove(); };     // 图取不到：露出底下的大字卡
+const dcImgFit = e => { const t = e.target; if (t.tagName === "IMG") t.parentNode.style.aspectRatio = Math.min(2.4, Math.max(4 / 3, t.naturalWidth / t.naturalHeight)); };     // 框跟着图走：横幅不留大色带，竖图最高到 4:3，不再占满屏
+PAGES.discover = {
+  ctx: "dc", cls: "dc-page", title: () => "发现", solid: true,
+  right: () => `<button class="nav-btn" data-act="go:dclist" aria-label="榜单">${ico("list")}</button><button class="nav-btn" data-act="go:dchist" aria-label="浏览记录">${ico("clock")}</button><button class="nav-btn" data-act="go:dcfav" aria-label="收藏">${ico("bookmark")}</button>`,
+  async load(pg) {
+    pg.stick = false;
+    if (!pg.dcOn) {
+      pg.dcOn = true;
+      pg.el.addEventListener("scroll", () => dcScroll(pg), { passive: true });
+      pg.el.addEventListener("error", dcImgErr, true);
+      pg.el.addEventListener("load", dcImgFit, true);
+    }
+    try {
+      const r = await q("dc_feed", {});
+      pg.data = { cards: r.cards, at: 0, max: 0, done: !r.cards.length };
+      pg.el.scrollTop = 0;
+      draw(pg);
+      dcMedia(pg);
+      dcView(pg.data.cards[0]);
+    } catch (e) { loadErr(pg, e); }
+  },
+  html(pg) {
+    const d = pg.data;
+    if (!d) return LOADING;
+    return d.cards.map(dcCardHtml).join("") + (d.done ? dcEndHtml() : "");
+  },
+};
+PAGES.dcfav = {
+  ctx: "dc", title: () => "收藏", sub: pg => pg.data ? `${pg.data.length} 个项目` : "", solid: true,
+  async load(pg) { pg.stick = false; try { pg.data = await q("dc_favs"); draw(pg); } catch (e) { loadErr(pg, e); } },
+  html(pg) {
+    const L = pg.data;
+    if (!L) return LOADING;
+    if (!L.length) return emptyHtml("bookmark", "还没有收藏", "刷到好项目，点图片下面的「收藏」");
+    return `<div class="group">${L.map(c => `<div class="row"><button class="r-main" data-act="dcfavopen" data-r="${esc(c.repo)}"><span class="r-t">${esc(c.repo)}</span><span class="r-s">${esc(c.one)}</span></button>` +
+      `<button class="chip" data-act="dcfavdel" data-r="${esc(c.repo)}" aria-label="取消收藏">${ico("x")}</button></div>`).join("")}</div>`;
+  },
+};
+// 浏览记录：刷到的、榜单里点开的都在，最新的在前；点一行回到这张卡片
+const dcHistRow = (c, k) => `<button class="row dc-row" data-act="dchistitem" data-k="${k}"><span class="r-main"><span class="r-t">${esc(c.repo)}</span>` +
+  (c.one ? `<span class="dc-sum">${esc(c.one)}</span>` : "") +
+  `<span class="r-s">${c.lang ? `<span>${esc(c.lang)}</span>` : ""}<span>★ ${dcNum(c.stars)}</span><span>${esc(fsTime(c.at * 1000))}</span></span></span></button>`;
+PAGES.dchist = {
+  ctx: "dc", title: () => "浏览记录", sub: pg => pg.data ? `${pg.data.length} 个项目` : "", solid: true,
+  async load(pg) { pg.stick = false; try { pg.data = await q("dc_hist"); draw(pg); } catch (e) { loadErr(pg, e); } },
+  html(pg) {
+    const L = pg.data;
+    if (!L) return LOADING;
+    return L.length ? `<div class="group">${L.map(dcHistRow).join("")}</div>` : emptyHtml("clock", "还没有浏览记录", "刷到的项目会记在这里");
+  },
+};
+// 榜单：日榜 / 周榜 / 月榜 / 总榜的列表，点一行进这个项目的卡片（四个按钮、地址都在卡片上）。看榜不算看过
+// 不限条数（2026-11-08 用户）：一次取 30 个，离底不到一屏就接着取，不用点
+const DC_TABS = [["daily", "日榜"], ["weekly", "周榜"], ["monthly", "月榜"], ["all", "总榜"]];
+async function dcBoard(pg, kind) {
+  const d = pg.data;
+  d.kind = kind;
+  d.err = "";
+  draw(pg);
+  if (d.lists[kind]) return dcBoardNear(pg);
+  try {
+    const r = await q("dc_board", { kind });
+    d.lists[kind] = r.items;
+    d.total[kind] = r.total ?? r.items.length;
+    d.sync = r.sync;
+  } catch (e) { if (d.kind === kind) d.err = e.message; }
+  if (stack.includes(pg)) { draw(pg); dcBoardNear(pg); }
+}
+const dcBoardFoot = d => {
+  const L = d.lists[d.kind], err = d.moreErr[d.kind];
+  return L.length >= d.total[d.kind] ? `<div class="dc-more">共 ${L.length} 个，到底了</div>` :
+    err ? `<button class="dc-more" data-act="dcboardmore">没加载出来（${esc(err)}），点这里重试</button>` : `<div class="dc-more">正在加载…</div>`;
+};
+function dcBoardNear(pg) {
+  const d = pg.data, L = d && d.lists[d.kind], e = pg.el;
+  if (L && !d.moreErr[d.kind] && e.scrollHeight - e.scrollTop - e.clientHeight < e.clientHeight) dcBoardMore(pg);
+}
+async function dcBoardMore(pg) {
+  const d = pg.data, kind = d.kind, L = d.lists[kind];
+  if (!L || d.busy || L.length >= d.total[kind]) return;
+  d.busy = true;
+  d.moreErr[kind] = "";
+  const foot = () => { const f = d.kind === kind && pg.el.querySelector(".dc-more"); if (f) f.outerHTML = dcBoardFoot(d); };
+  foot();
+  try {
+    const r = await q("dc_board", { kind, start: L.length }), n = L.length;
+    L.push(...r.items);
+    d.total[kind] = r.items.length ? r.total : n;       // 后台这时正好重抓了、榜变短了：就停在这
+    if (d.kind === kind) pg.el.querySelector(".dc-board").insertAdjacentHTML("beforeend", r.items.map((c, k) => dcRow(c, n + k)).join(""));
+  } catch (e) { d.moreErr[kind] = e.message; }
+  d.busy = false;
+  if (!stack.includes(pg)) return;
+  foot();
+  dcBoardNear(pg);                                     // 加载的时候切到了别的榜、或者这一批还没填满一屏：接着看要不要再取
+}
+const dcRow = (c, k) => `<button class="row dc-row" data-act="dcitem" data-k="${k}"><span class="dc-rank">${k + 1}</span><span class="r-main"><span class="r-t">${esc(c.repo)}</span>` +
+  (c.one ? `<span class="dc-sum">${esc(c.one)}</span>` : "") +
+  `<span class="r-s">${c.lang ? `<span>${esc(c.lang)}</span>` : ""}<span>★ ${dcNum(c.stars)}</span>${c.gain ? `<span class="dc-gain">${esc(c.gainp)} +${dcNum(c.gain)}</span>` : ""}</span></span></button>`;
+PAGES.dclist = {
+  ctx: "dc", title: () => "榜单", sub: pg => pg.data && pg.data.sync ? pg.data.sync.slice(5) + " 更新" : "", solid: true,
+  load(pg) {
+    pg.stick = false;
+    pg.data = pg.data || { kind: "daily", lists: {}, total: {}, moreErr: {}, sync: "" };
+    if (!pg.dcOn) { pg.dcOn = true; pg.el.addEventListener("scroll", () => dcBoardNear(pg), { passive: true }); }
+    return dcBoard(pg, pg.data.kind);
+  },
+  html(pg) {
+    const d = pg.data;
+    if (!d) return LOADING;
+    const L = d.lists[d.kind];
+    return `<div class="fs-bar dc-tabs">${DC_TABS.map(([k, t]) => `<button class="fs-chip${k === d.kind ? " on" : ""}" data-act="dctab:${k}">${t}</button>`).join("")}</div>` +
+      (d.err ? errHtml(d.err) : !L ? LOADING : L.length ? `<div class="group dc-board">${L.map(dcRow).join("")}</div>${dcBoardFoot(d)}` : emptyHtml("compass", "这个榜还没抓到", "每天早上 8 点后更新"));
+  },
+};
+// 详情页：上面是这张卡，下面「大家怎么说」。Reddit / HN 由后台自动抓（discover.py talk_worker），没抓到的点开时插队，这边隔一会再问，不用用户操作。
+// X 用的是用户主号，只有点开这一页才搜（x_worker）：搜的时候 1 秒、翻译的时候 2 秒问一次，原文先出来，翻译好了原地换
+const DC_SRC = { reddit: "Reddit", hn: "Hacker News", x: "X" };
+function dcSay(x, i) {
+  const orig = [x.title, x.text].filter(Boolean).join("\n");
+  return `<div class="dc-say" data-act="dcsayopen" data-i="${i}"><div class="dc-say-h"><b>${DC_SRC[x.src] || esc(x.src)}</b>${x.where ? `<span>${esc(x.where)}</span>` : ""}<span>${esc(x.who)}</span><span>${esc(fsTime(x.at * 1000))}</span>` +
+    `${x.score ? `<span>${x.src === "x" ? "♥" : "▲"} ${dcNum(x.score)}</span>` : ""}${x.n ? `<span>${dcNum(x.n)} 条评论</span>` : ""}</div><div class="dc-say-t">${esc(x.zh || orig)}</div>` +
+    (x.zh ? `<div class="dc-say-o" hidden>${esc(orig)}</div><button class="dc-say-b" data-act="dcsayorig">看原文</button>` : "") + "</div>";
+}
+const dcXBusy = d => d.xs === "fetch" || d.xs === "zh";
+function dcTalkHtml(pg) {
+  const d = pg.talk || {}, items = d.items || [], down = d.down || [], note = t => `<div class="dc-talk-note">${esc(t)}</div>`;
+  const xNote = { fetch: "正在搜 X…", zh: "X 上的先显示原文，正在翻译" }[d.xs] || d.xmsg || "";
+  const state = pg.talkErr ? note(pg.talkErr) : !pg.talk ? note("正在找讨论…") :
+    d.wait ? note((items.length ? "Reddit、Hacker News 还在找" : "正在找讨论") + "，大约 3 分钟，找到了这里自己会更新") :
+    items.length || d.xs === "fetch" ? "" : note(down.length ? "暂时没取到讨论" : "还没找到讨论");
+  const login = t => IAB ? `<div class="dc-talk-x"><span>${t}</span><button class="btn" data-act="dcxlogin">登录 X</button></div>` : "";
+  return `<h3 class="dc-talk-h">大家怎么说</h3>${d.sum ? `<p class="dc-talk-sum">${esc(d.sum)}</p>` : ""}${state}${xNote ? note(xNote) : ""}${items.map(dcSay).join("")}` +
+    (down.length ? note(down.join("、") + " 暂时取不到") : "") +
+    (!pg.talk ? "" : !d.x ? login("登录 X，就能看 X 上的讨论") : d.xlogin ? login("重新登录 X 就能接着搜") : "");
+}
+async function dcTalkLoad(pg) {
+  try { pg.talk = await q("dc_talk", { repo: pg.p.c.repo }); pg.talkErr = ""; }
+  catch (e) { pg.talkErr = e.message; }
+  if (!stack.includes(pg)) return;
+  pg.el.querySelector(".dc-talk").innerHTML = dcTalkHtml(pg);       // 只换这一块：整页重画会把图闪一下
+  clearTimeout(pg.talkT);
+  if (pg.talkErr || pg.talk.wait || dcXBusy(pg.talk)) pg.talkT = setTimeout(() => { if (stack.includes(pg)) dcTalkLoad(pg); }, pg.talkErr || !dcXBusy(pg.talk) ? 20000 : pg.talk.xs === "fetch" ? 1000 : 2000);     // 正在搜 X：1 秒问一次，搜到马上出来
+}
+// X 没有免费接口，要一个登录过的账号：用户在内置浏览器里登录（密码不经过我们），这边隔几秒看一眼，登录状态出现了就传给服务器存起来
+let dcXT = 0;
+function dcXWatch(n) {
+  clearTimeout(dcXT);
+  dcXT = setTimeout(async () => {
+    const c = await IAB.getCookies({ url: "https://x.com", includeHttpOnly: true }).catch(() => ({}));
+    if (!c.auth_token || !c.ct0) { if (n > 1) dcXWatch(n - 1); return; }
+    try {
+      await q("dc_x_set", { auth_token: c.auth_token, ct0: c.ct0 });
+      stack.filter(p => p.key === "dccard" && p.talk).forEach(dcTalkLoad);      // 登录好了马上搜 X
+    } catch (e) { if (n > 1) dcXWatch(n - 1); }
+  }, 3000);
+}
+PAGES.dccard = {
+  ctx: "dc", cls: "dc-page", title: pg => pg.p.c.repo.split("/")[1], solid: true,
+  load(pg) {
+    pg.stick = false;
+    pg.data = { cards: [pg.p.c], at: 0 };
+    pg.el.addEventListener("error", dcImgErr, true);
+    pg.el.addEventListener("load", dcImgFit, true);
+    dcMedia(pg);
+    dcView(pg.p.c);
+    dcTalkLoad(pg);
+  },
+  html: pg => `${dcCardHtml(pg.p.c, 0)}<section class="dc-talk">${dcTalkHtml(pg)}</section>`,
+};
+function dcFeedSet(repo, key, act, val) {            // 收藏页、榜单里改了状态：发现页上同一个项目的卡跟着变
+  const feed = stack.find(p => p.key === "discover"), k = feed && feed.data ? feed.data.cards.findIndex(c => c.repo === repo) : -1;
+  if (k < 0) return;
+  feed.data.cards[k][key] = val;
+  feed.el.children[k].querySelector(`[data-act="${act}"]`).classList.toggle("on", !!val);
+}
+const dcOf = t => { const pg = curPage(), card = t.closest(".dc-card"); return { card, c: pg.data.cards[+card.dataset.i] }; };
+function dcErr(card, text) { const e = card.querySelector(".dc-err"); e.textContent = text; e.hidden = !text; }
+async function dcToggle(t, key, op) {                // 收藏 / Star：先变样子，失败退回来，就地一行字
+  const { card, c } = dcOf(t), on = !c[key];
+  c[key] = on; t.classList.toggle("on", on);
+  hap("light");
+  try { await q(op, { repo: c.repo, on }); dcErr(card, ""); dcFeedSet(c.repo, key, t.dataset.act, on); }
+  catch (e) { c[key] = !on; t.classList.toggle("on", !on); dcErr(card, e.message); }
+}
+Object.assign(ACT, {
+  dcfav: (_, t) => dcToggle(t, "fav", "dc_fav"),
+  dcstar: (_, t) => dcToggle(t, "star", "dc_star"),
+  dcopen: (_, t) => brOpen("https://github.com/" + dcOf(t).c.repo),
+  dcdetail: (_, t) => { if (curPage().key === "discover") go("dccard", { c: dcOf(t).c }); },
+  dcsayopen: (_, t) => brOpen(curPage().talk.items[+t.dataset.i].url),
+  dcsayorig: (_, t) => { const o = t.previousElementSibling; o.hidden = !o.hidden; t.textContent = o.hidden ? "看原文" : "收起原文"; },
+  dcxlogin: () => { brOpen("https://x.com/i/flow/login"); dcXWatch(200); },
+  dctab: k => dcBoard(curPage(), k),
+  dcboardmore: () => dcBoardMore(curPage()),
+  dcitem: (_, t) => { const d = curPage().data; go("dccard", { c: d.lists[d.kind][+t.dataset.k] }); },
+  async dcask(_, t) {
+    const { card, c } = dcOf(t);
+    if (c.asked) { goSection("claude"); return ACT.csw(c.asked); }
+    if (c.asking) return;
+    c.asking = true;
+    hap("light");
+    try {
+      c.asked = (await q("dc_ask", { repo: c.repo })).sid;
+      t.classList.add("on");
+      dcErr(card, "");
+      dcFeedSet(c.repo, "asked", "dcask", c.asked);
+    } catch (e) { dcErr(card, e.message); }
+    c.asking = false;
+  },
+  dchistitem: (_, t) => go("dccard", { c: curPage().data[+t.dataset.k] }),
+  dcfavopen: (_, t) => brOpen("https://github.com/" + t.dataset.r),
+  async dcfavdel(_, t) {
+    const r = t.dataset.r, pg = curPage();
+    try {
+      await q("dc_fav", { repo: r, on: false });
+      pg.data = pg.data.filter(c => c.repo !== r);
+      draw(pg);
+      dcFeedSet(r, "fav", "dcfav", false);
+    } catch (e) { hint(e.message); }
+  },
+});
+
 // ---------------------------------------------------------------- 返回：左边缘右滑（上一页跟着手出来）、安卓返回键
 (function edgeSwipe() {
   let d = null;
   stage.addEventListener("pointerdown", e => {
-    if (e.clientX > 22 || stack.length < 2 || curPage().sec || curPage().def.noSwipe || sheetKind || ptt || pttHeld) return;     // 一级页上的边缘右滑拉侧栏（下面 drawerDrag）；浏览器页边缘滑动留给网页自己的前进后退
+    if (e.pointerType === "mouse" && WIDE) return;                   // 电脑上用鼠标：靠左上角 ← 和 Esc，不做拖拽返回
+    if (e.clientX - stage.getBoundingClientRect().left > 22 || stack.length < 2 || curPage().sec || curPage().def.noSwipe || sheetKind || ptt || pttHeld) return;     // 一级页上的边缘右滑拉侧栏（下面 drawerDrag）；浏览器页边缘滑动留给网页自己的前进后退；宽屏时边缘 = 右边内容区的左边缘
     settle();
     const cur = curPage(), prev = stack[stack.length - 2];
     prev.el.classList.remove("off");
@@ -3125,6 +3768,7 @@ function saveSettings() {
       hap("light");
       stack.pop();
       chrome(g.prev);
+      leavePage(g.cur);
       slide(g.cur.el, g.prev.el, -1, dx, () => g.cur.el.remove());
       if (g.prev.def.onShow) g.prev.def.onShow(g.prev);
     } else {
@@ -3156,7 +3800,7 @@ function saveSettings() {
     d.x = e.clientX; d.t = now;
   }
   stage.addEventListener("pointerdown", e => {
-    if (e.clientX > 22 || (stack.length > 1 && !curPage().sec) || curPage().def.noSwipe || dwOn || sheetKind || ptt || pttHeld) return;
+    if (WIDE || e.clientX > 22 || (stack.length > 1 && !curPage().sec) || curPage().def.noSwipe || dwOn || sheetKind || ptt || pttHeld) return;     // 宽屏侧栏常驻，不用拉
     pn.innerHTML = drawerHtml(tiles);
     updConn();
     d = { x0: e.clientX, y0: e.clientY, x: e.clientX, t: performance.now(), v: 0, w: pn.offsetWidth, open: false, live: true };
@@ -3199,7 +3843,7 @@ function saveSettings() {
 if (AppP) {
   try {
     AppP.addListener("backButton", () => {
-      if ($("#viewer").classList.contains("on")) return $("#viewer").classList.remove("on");
+      if ($("#viewer").classList.contains("on")) return $("#viewer").classList.contains("menu") ? vwMenu(false) : vwClose();
       if (popCtx) return closePop();
       if (sheetKind) return closeSheet();
       if (dwOn) return closeDrawer();
@@ -3527,13 +4171,13 @@ function onAsrErr(m) {
     if (!p) continue;
     dropPend(to, p.k);
     p.cmp.restoreText(to, m.text || "", p.files);
-    hint(m.err);
+    hint(zhErr(m.err, "没录到声音，再说一次"));
   }
 }
 
 // ---------------------------------------------------------------- 输入栏（一个类，Claude / 小智页底下一个，小芽通话里一个）
 function makeComposer() {
-  const c = { to: "claude", drafts: {}, el: null };
+  const c = { to: "claude", drafts: {}, parked: {}, sess: {}, el: null };   // parked：换走的会话停放着的草稿 "引擎:会话号" → 草稿；sess：每个引擎现在看的是哪个会话
   c.el = el(`<div class="cmp"><div class="cmp-att"></div><div class="cmp-row">
     <button class="cmp-btn cmp-mode" aria-label="切换打字 / 说话"></button>
     <div class="cmp-mid"><textarea class="cmp-in" rows="1" placeholder="发消息" enterkeyhint="send"></textarea><button class="cmp-hold">按住 说话</button></div>
@@ -3543,13 +4187,13 @@ function makeComposer() {
   c.el.__c = c;
   const ta = c.el.querySelector(".cmp-in"), hold = c.el.querySelector(".cmp-hold"), attBox = c.el.querySelector(".cmp-att");
   const d = () => c.drafts[c.to] || (c.drafts[c.to] = { text: "", atts: [] });
-  c.mode = store("cmpMode") || "voice";
+  c.mode = store("cmpMode") || (WIDE && FINE_MQ.matches ? "text" : "voice");       // 电脑上默认打字
   function setMode(m, focus) {
+    if (c.mode !== m) store("cmpMode", m);
     c.mode = m;
-    store("cmpMode", m);
     c.el.dataset.mode = m;
     c.el.querySelector(".cmp-mode").innerHTML = ico(m === "voice" ? "kbd" : "mic");
-    if (m === "text" && focus) setTimeout(() => ta.focus(), 30);
+    if (m === "text" && focus) ta.focus();
     if (m === "voice") ta.blur();
     upd();
   }
@@ -3560,8 +4204,20 @@ function makeComposer() {
     grow();
     barSize();
   }
-  c.setTo = to => {
+  c.setTo = (to, sid) => {
     if (c.to !== to) { d().text = ta.value; c.to = to; ta.value = d().text; renderAtt(); }
+    if (sid) {      // 草稿按会话分（2026-11-07）：会话换了，旧草稿（字 + 附件）停放起来，取出新会话自己的；第一次拿到会话号不算换
+      const old = c.sess[to];
+      if (old && old !== sid) {
+        const cur = d();
+        cur.text = ta.value;
+        if (cur.text || cur.atts.length) c.parked[to + ":" + old] = cur;
+        c.drafts[to] = c.parked[to + ":" + sid] || { text: "", atts: [] };
+        delete c.parked[to + ":" + sid];
+        ta.value = d().text; renderAtt();
+      }
+      c.sess[to] = sid;
+    }
     c.setMore(false);
     setMode(c.mode, false);
   };
@@ -3609,7 +4265,7 @@ function makeComposer() {
     const x = e.target.closest(".x");
     if (!x) return;
     const dd = d(), a = dd.atts.find(y => y.k === +x.dataset.k);
-    if (a && a.xhr) a.xhr.abort();
+    if (a && a.xhr) { a.cancel = true; a.xhr.abort(); }
     dd.atts = dd.atts.filter(y => y.k !== +x.dataset.k);
     renderAtt();
   });
@@ -3619,13 +4275,14 @@ function makeComposer() {
   // 先把它挪到点的那个按钮上，iOS 的菜单就从按钮那儿出来，不再悬在半空
   c.pick = async (k, btn) => {
     if (k !== "camera" && Link && PLATFORM === "ios" && window.SHELL_V >= 4) {
+      const to = c.to;
       try {
         const r = await Link.pick({ kind: k, max: Math.max(1, 9 - d().atts.length) });
         const fs = (r && r.files) || [];
         if (fs.length) c.setMore(false);
         for (const f of fs) {
           const b = await (await fetch(CAP.convertFileSrc(f.path))).blob();
-          await c.add(new File([b], f.name, { type: f.mime || b.type }));
+          await c.add(new File([b], f.name, { type: f.mime || b.type }), to);
         }
       } catch (e) { hint("没打开" + (k === "files" ? "文件" : "相册") + "：" + e.message); }
       return;
@@ -3637,8 +4294,8 @@ function makeComposer() {
     inp.click();
   };
   let attSeq = 0;
-  c.add = async file => {
-    const to = c.to, dd = d();
+  c.add = async (file, target = c.to) => {
+    const to = target, dd = c.drafts[to] || (c.drafts[to] = { text: "", atts: [] });
     if (dd.atts.length >= 9) { hint("一次最多 9 个"); return; }
     const kind = /^image\//.test(file.type) || /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name) ? "image" : "file";
     const a = { k: ++attSeq, name: file.name || (kind === "image" ? "图片.jpg" : "文件"), kind, size: file.size, st: "up", pct: 0, url: kind === "image" ? URL.createObjectURL(file) : "" };
@@ -3650,7 +4307,7 @@ function makeComposer() {
     a.size = f.size;
     upload(f, a.name, a, pct => { a.pct = pct; if (c.to === to) { const p = attBox.querySelector(`.x[data-k="${a.k}"]`); const pr = p && p.parentNode.querySelector(".prog"); if (pr) pr.textContent = pct + "%"; } })
       .then(r => { a.id = r.id; a.size = r.size; a.st = "ok"; })
-      .catch(e => { a.st = "err"; hint("上传失败：" + e.message); })
+      .catch(e => { a.st = "err"; if (!a.cancel) hint("上传失败：" + e.message); })
       .finally(() => { if (c.to === to) renderAtt(); });
   };
   c.takeFiles = to => {
@@ -3669,10 +4326,11 @@ function makeComposer() {
     const dd = c.drafts[to] || (c.drafts[to] = { text: "", atts: [] });
     dd.text = text + (dd.text ? "\n" + dd.text : "");
     if (files && files.length) c.restoreFiles(to, files);
-    if (c.to === to) { ta.value = dd.text; setMode("text", false); }
+    if (c.to === to) { ta.value = dd.text; if (text) setMode("text", false); }
   };
   c.send = async () => {
     const to = c.to, dd = d();
+    if (dd.atts.some(a => a.st === "err")) { hint("有附件没传上去，去掉或重选"); return; }
     if (dd.atts.some(a => a.st === "up")) { hint("附件还在上传，传完再发"); return; }
     const text = c.mode === "text" ? ta.value.trim() : "";
     const files = c.takeFiles(to);
@@ -3690,6 +4348,17 @@ function makeComposer() {
 }
 const cmpMain = makeComposer();
 stage.addEventListener("pointerdown", () => cmpMain.setMore(false));   // 点对话收起「+」面板
+// 宽屏（平板 / 电脑）：粘贴截图 / 文件、把文件拖进窗口 = 加进输入栏的附件（电脑没有「拍照」，截图粘贴代替）。拖进来不接住的话，Electron 会整个窗口跳去打开那个文件
+cmpMain.el.querySelector(".cmp-in").addEventListener("paste", e => {
+  const fs = WIDE ? [...((e.clipboardData && e.clipboardData.files) || [])] : [];
+  if (fs.length) { e.preventDefault(); fs.forEach(f => cmpMain.add(f)); }
+});
+["dragover", "drop"].forEach(t => document.addEventListener(t, e => {
+  if (!WIDE || !e.dataTransfer || ![...(e.dataTransfer.types || [])].includes("Files")) return;
+  e.preventDefault();
+  if (t === "drop" && $("#bar").dataset.kind === "composer") [...e.dataTransfer.files].forEach(f => cmpMain.add(f));
+  else if (t === "drop") hint("这一页没有输入栏，切到对话页再拖进来");
+}));
 
 // 图片发之前先压一压（最长边 1600、JPEG 0.82）：北京中转只有 1M 带宽，原图几 MB 要传半分钟
 async function shrink(file) {
@@ -3714,7 +4383,7 @@ function upload(blob, name, a, onPct) {
     x.onload = () => {
       let r = null;
       try { r = JSON.parse(x.responseText); } catch (e) { /* 不是 JSON */ }
-      if (x.status === 200 && r && r.id) res(r); else rej(new Error((r && r.error) || "HTTP " + x.status));
+      if (x.status === 200 && r && r.id) res(r); else rej(new Error((r && r.error) || "服务器出错了"));
     };
     x.onerror = () => rej(new Error("网络出错"));
     x.onabort = () => rej(new Error("已取消"));
@@ -3758,6 +4427,8 @@ async function callStart(to) {
   }
   ac();
   call.on = true; call.to = to; call.aec = false; call.t0 = Date.now(); call.muted = false; call.cap = {};
+  const t0 = call.t0;                                 // 刚切回前台重连要一两秒，照常进通话页等；十秒还没连上才结束，别一直挂着「通话中」
+  setTimeout(() => { if (call.on && call.t0 === t0 && !online) callEnd("连不上服务器，网好了再打"); }, 10000);
   xyThink = false;
   callLook();
   capUpd();
@@ -4172,16 +4843,18 @@ if (Link) {
   if (Link.takeTarget) Link.takeTarget().then(noteTarget).catch(() => {});
 }
 function bgSync() {
-  if (!Link) return;
+  if (!Link && !window.xyDesk) return;
   const o = { keep: bgOn, notify: noteOn, call: call.on, busy: cBusy.size > 0 || oBusy.size > 0 };
   const k = JSON.stringify(o);
   if (k === bgLast) return;
   bgLast = k;
-  Link.bg(o).catch(() => {});
+  if (Link) Link.bg(o).catch(() => {});
+  else window.xyDesk.bg(o);                          // 电脑版：keep = 关窗口缩进托盘继续跑
 }
 // App 在前台时不弹（2026-10-16 用户：App 里的弹窗都不要）：小芽的话、定时提醒首页对话里有，Claude 做完左上角菜单按钮带点；
 // iPhone 安装包 v4 起定时提醒在前台也弹系统横幅（原生）。只有通话收成悬浮球时，小芽的话、提醒照旧显示在球上
 function onNote(m) {
+  if (window.xyDesk && noteOn && m.title && (document.hidden || !document.hasFocus())) window.xyDesk.notify({ title: m.title, body: m.body || "", k: m.k });      // 电脑版：窗口不在前面（最小化 / 托盘 / 别的窗口）才弹系统通知，跟手机一样前台不弹
   const pg = curPage();
   if (m.k === "xy" && !(pg && pg.key === "home")) flash(m.body, { title: "小芽" });
   if (m.k === "xz" && call.on && call.to === "xz") flash(m.body, { title: "小智" });      // 打给小智收起成悬浮球时，她答的话在球上冒一下
@@ -4253,6 +4926,7 @@ $("#lgPwToggle").innerHTML = ico("eye");
 if (Kbd && PLATFORM === "ios") { try { Kbd.setAccessoryBarVisible({ isVisible: false }).catch(() => {}); } catch (e) { /* 没有 */ } }
 
 // ---------------------------------------------------------------- 启动（2026-10-27 起栈底是 Claude，小芽在侧栏里）
+applyWide();
 go("claude");
 connect();
 if (window.uiBootOk) uiBootOk();                     // 跑到这里 = 这版界面能起来，boot.js 不用回滚

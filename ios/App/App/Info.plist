@@ -93,6 +93,9 @@
 	<string>拍照发给 Claude、小智、小芽</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>从相册选图片发给 Claude、小智、小芽</string>
+	<!-- 安装包 v8（2026-11-13）：看大图长按「存储到照片」要这条，缺了写相册会闪退 -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>把对话里的图片存到相册</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- 服务器是 ws://IP:8003，没有 HTTPS -->
