@@ -93,6 +93,7 @@ const ICONS = {
   speak: '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18.2 6.5a7.8 7.8 0 0 1 0 11"/>',
   speakOff: '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+  share: '<path d="M12 4v11M8.5 7.5L12 4l3.5 3.5"/><path d="M8.5 10.5H7A1.5 1.5 0 0 0 5.5 12v6A1.5 1.5 0 0 0 7 19.5h10a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5h-1.5"/>',
   term: '<path d="M5 7.5l4 4-4 4M11.5 16.5H19"/>',
   file: '<path d="M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"/><path d="M13 3.5V8.5h5"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.7"/><path d="M20.5 15.5L16 11l-8.5 8.5"/>',
@@ -3101,6 +3102,10 @@ document.addEventListener("click", e => {
   document.addEventListener("contextmenu", e => {
     const b = WIDE && e.target.closest && e.target.closest(".bub[data-i]");
     if (b && !e.target.closest("a, button, img")) { e.preventDefault(); openPop(b); return; }      // 电脑：右键气泡 = 长按菜单（有选中的字就复制选中的）
+    const im = WIDE && e.target.closest && e.target.closest(POP_IMG);
+    if (im) { e.preventDefault(); openImgPop(im); return; }                                      // 电脑：右键图片 = 复制图片
+    const fc = WIDE && e.target.closest && e.target.closest(POP_FILE);
+    if (fc) { e.preventDefault(); openFilePop(fc); return; }                                     // 电脑：右键文件卡片 = 复制文件
     if (!e.target.closest("textarea, input, .sel-text")) e.preventDefault();
   });   // 安卓长按选字先发 contextmenu，拦了就选不了
 })();
@@ -3111,7 +3116,7 @@ document.addEventListener("click", e => {
 const VW = { el: $("#viewer"), img: $("#viewer img"), nw: 1, nh: 1, k: 1, x: 0, y: 0, k1: 1, kMin: 1, kMax: 4, pts: new Map(), g: null, lastTap: null, tapTm: 0, lpTm: 0 };
 const vwNative = () => PLATFORM === "ios" && !!Link && window.SHELL_V >= 8;
 VW.img.draggable = false;
-VW.el.insertAdjacentHTML("beforeend", '<div class="vw-tip"></div><div class="vw-menu"><button data-vw="save">保存图片</button><button data-vw="cancel">取消</button></div>');
+VW.el.insertAdjacentHTML("beforeend", '<div class="vw-tip"></div><div class="vw-menu"><button data-vw="copy">复制图片</button><button data-vw="save">保存图片</button><button data-vw="cancel">取消</button></div>');
 function vwOpen(src) {
   clearTimeout(VW.tapTm); vwMenu(false); vwTip("");
   VW.el.classList.toggle("nsave", vwNative());
@@ -3174,6 +3179,7 @@ VW.el.addEventListener("click", e => {
   if (!b) return;
   if (b.classList.contains("vw-x")) vwClose();
   else if (b.dataset.vw === "save") vwSave();
+  else if (b.dataset.vw === "copy") { vwMenu(false); copyImg(VW.img.src, vwTip); }
   else if (b.dataset.vw === "cancel") vwMenu(false);
 });
 VW.el.addEventListener("pointerdown", e => {
@@ -3264,16 +3270,40 @@ function copy(text) {
     else end("无此接口");
   } catch (e) { end(e.name || "异常"); }
 }
+// 复制图片（2026-11-13 用户：图片、文件能不能长按复制）：网页剪贴板只收 PNG，别的格式先画成 PNG（iOS 画布上限约 1677 万像素，超了按比例缩）。
+// iOS 要在点击当下就调 write，图片读好之前先把 promise 塞进 ClipboardItem（Safari 认这种写法）。每次结果记一行服务日志（grep「copyimg」），真机确认后可去掉
+function imgPng(src) {
+  return fetch(src).then(r => { if (!r.ok) throw new Error("服务器回 " + r.status); return r.blob(); }).then(b => b.type === "image/png" ? b : new Promise((ok, no) => {
+    const u = URL.createObjectURL(b), im = new Image();
+    im.onerror = () => { URL.revokeObjectURL(u); no(new Error("图片读不出来")); };
+    im.onload = () => {
+      const w = im.naturalWidth || 300, h = im.naturalHeight || 150, k = Math.min(1, Math.sqrt(16e6 / (w * h))), c = document.createElement("canvas");
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(u);
+      c.toBlob(p => p ? ok(p) : no(new Error("转不成 PNG")), "image/png");
+    };
+    im.src = u;
+  }));
+}
+function copyImg(src, say) {
+  const end = err => { errNote("copy", `img clip=${err || "ok"} secure=${window.isSecureContext}`, "copyimg"); if (err) say("图片没复制上：" + err); };
+  const why = e => (e && e.name && e.name !== "Error" && e.name !== "TypeError" ? e.name : (e && e.message) || String(e));
+  if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) { end("这台设备不支持"); return; }
+  try { navigator.clipboard.write([new ClipboardItem({ "image/png": imgPng(src) })]).then(() => end(), e => end(why(e))); }
+  catch (e) { end(why(e)); }
+}
 
-// 长按气泡：复制 / 朗读
+// 长按气泡：复制 / 朗读；长按对话里的图片（和文件页的图片）：复制图片；长按对话里的文件卡片：复制 / 分享文件
+const POP_IMG = ".att img[data-act=img], .fs-img", POP_FILE = ".att .fcard";
 let popCtx = null, lpTimer = 0, lpX = 0, lpY = 0;
 document.addEventListener("pointerdown", e => {
-  const b = e.target.closest(".bub[data-i]");
-  if (!b || e.target.closest("a, button, img")) return;
+  const im = e.target.closest(POP_IMG), fc = !im && e.target.closest(POP_FILE), b = im || fc || e.target.closest(".bub[data-i]");
+  if (!b || (!im && !fc && e.target.closest("a, button, img"))) return;
   if (WIDE && e.pointerType === "mouse") return;      // 电脑：按住拖是选字，菜单走右键（下面 contextmenu）
   lpX = e.clientX; lpY = e.clientY;
   clearTimeout(lpTimer);
-  lpTimer = setTimeout(() => openPop(b), 480);
+  lpTimer = setTimeout(() => im ? openImgPop(im) : fc ? openFilePop(fc) : openPop(b), 480);
 }, true);
 document.addEventListener("pointermove", e => { if (Math.abs(e.clientX - lpX) + Math.abs(e.clientY - lpY) > 8) clearTimeout(lpTimer); }, { passive: true });
 document.addEventListener("pointerup", () => clearTimeout(lpTimer));
@@ -3285,9 +3315,45 @@ function openPop(b) {
   hap("medium");
   const sel = WIDE && b.contains(getSelection().anchorNode) ? getSelection().toString().trim() : "";     // 电脑：气泡里已经选了一段字，「复制」就复制这一段
   popCtx = { text: sel || text, whole: text, who: b.dataset.who || "", b };
+  popShow(b, `<button data-act="pop:copy">${ico("copy")}<span>${sel ? "复制所选" : "复制"}</span></button>` + (WIDE && FINE_MQ.matches ? "" : `<button data-act="pop:sel">${ico("textSel")}<span>选择文字</span></button>`) + (b.dataset.who ? `<button data-act="pop:speak">${ico("speak")}<span>朗读</span></button>` : ""));
+}
+function openImgPop(im) {
+  if (!im.complete || !im.naturalWidth) return;      // 还没读出来 / 坏图：不出菜单
+  hap("medium");
+  popCtx = { img: im.currentSrc || im.src, b: im, lp: true };
+  popShow(im, `<button data-act="pop:copyimg">${ico("copy")}<span>复制</span></button>`);
+}
+// 复制 / 分享文件（2026-11-13 用户：文件也要长按复制，「复制」「分享」两个都加）：网页剪贴板放不了文件，全靠壳——
+// iOS 安装包 v9 起 Link.fileAct（原生下载，复制 = 放进系统剪贴板，分享 = 系统分享面板）；电脑版壳 v5 起 xyDesk.copyFile（只有复制，粘到资源管理器 / 微信）
+const fileNative = () => PLATFORM === "ios" && !!Link && window.SHELL_V >= 9;
+const fileDesk = () => !!(window.xyDesk && window.xyDesk.copyFile);
+function openFilePop(fc) {
+  const nat = fileNative();
+  if (!nat && !fileDesk()) { hint(PLATFORM === "ios" && Link ? "复制、分享文件要先更新小芽安装包" : "这台设备上还不能复制、分享文件"); return; }
+  const a = fc.dataset.act || "", i = a.indexOf(":"), v = a.slice(i + 1);
+  const f = a.startsWith("fpath:") ? { url: fsUrl(v), name: v.split("/").pop() } : { url: fileUrl(v), name: fc.dataset.name || v.split("/").pop() };
+  hap("medium");
+  popCtx = Object.assign(f, { b: fc, lp: true });
+  popShow(fc, `<button data-act="pop:fcopy">${ico("copy")}<span>复制</span></button>` + (nat ? `<button data-act="pop:fshare">${ico("share")}<span>分享</span></button>` : ""));
+}
+async function fileDo(act, c) {
+  const r = c.b.getBoundingClientRect(), wait = act === "share" ? "正在准备文件…" : "正在复制文件…";
+  const tm = setTimeout(() => hint(wait), 600);                // 大文件要下一会儿，慢了才说一声
+  let err = "";
+  try {
+    if (fileNative()) await Link.fileAct({ act, url: c.url, name: c.name, x: r.left, y: r.top, w: r.width, h: r.height });
+    else await window.xyDesk.copyFile({ url: c.url, name: c.name });
+  } catch (e) { err = String((e && e.message) || e || "出错了").replace(/^Error invoking remote method '\w+': (Error: )?/, ""); }     // 电脑版壳转过来的错误带一段英文前缀
+  clearTimeout(tm);
+  if (hintEl.textContent === wait) { hintEl.classList.remove("on"); hintEl.remove(); barSize(); }
+  errNote("copy", `file ${act} ${err || "ok"}`, "copyfile");           // 真机确认后可去掉（grep「copyfile」）
+  if (err) hint((act === "share" ? "没分享成：" : "文件没复制上：") + err);
+  else if (act === "copy") hap("light");                               // 复制成功只震一下，不弹「已复制」
+}
+function popShow(b, html) {
   b.classList.add("held");
   const p = $("#pop");
-  p.innerHTML = `<button data-act="pop:copy">${ico("copy")}<span>${sel ? "复制所选" : "复制"}</span></button>` + (WIDE && FINE_MQ.matches ? "" : `<button data-act="pop:sel">${ico("textSel")}<span>选择文字</span></button>`) + (b.dataset.who ? `<button data-act="pop:speak">${ico("speak")}<span>朗读</span></button>` : "");
+  p.innerHTML = html;
   const r = b.getBoundingClientRect();
   p.classList.add("on");
   const w = p.offsetWidth, h = p.offsetHeight;
@@ -3297,12 +3363,15 @@ function openPop(b) {
 }
 function closePop() { $("#pop").classList.remove("on"); if (popCtx) popCtx.b.classList.remove("held"); popCtx = null; }
 document.addEventListener("pointerdown", e => { if (popCtx && !e.target.closest("#pop")) closePop(); }, true);
+document.addEventListener("click", e => { if (popCtx && popCtx.lp && popCtx.b.contains(e.target)) { e.preventDefault(); e.stopPropagation(); } }, true);   // 长按图片 / 文件松手那下的 click 别再打开大图 / 文件
 document.addEventListener("scroll", () => { if (popCtx) closePop(); }, true);
 async function popDo(k) {
   const c = popCtx;
   closePop();
   if (!c) return;
   if (k === "copy") copy(c.text);                    // 点「复制」本身震一下，不弹「已复制」
+  if (k === "copyimg") copyImg(c.img, hint);
+  if (k === "fcopy" || k === "fshare") fileDo(k === "fshare" ? "share" : "copy", c);
   if (k === "sel") openSheet("seltext", `<div class="sh-head"><b>选择文字</b><span>长按文字，拖动两端选好范围，再点系统菜单的「拷贝」</span></div><div class="sel-text${c.who ? " md" : " sel-plain"}">${c.who ? md(c.text) : esc(c.text)}</div>`);   // 2026-11-07 用户：只复制一部分。放弹层里选，不和气泡的长按菜单、侧滑返回、流式刷新抢手势
   if (k === "speak") { try { await q("speak", { text: c.text, who: c.who }); } catch (e) { hint(e.message); } }
 }
@@ -4853,8 +4922,10 @@ function bgSync() {
 }
 // App 在前台时不弹（2026-10-16 用户：App 里的弹窗都不要）：小芽的话、定时提醒首页对话里有，Claude 做完左上角菜单按钮带点；
 // iPhone 安装包 v4 起定时提醒在前台也弹系统横幅（原生）。只有通话收成悬浮球时，小芽的话、提醒照旧显示在球上
+let deskInput = 0;                                   // 电脑版：用户最近一次在小芽窗口里点 / 按键 / 滚轮的时间（判断「正看着」用，焦点状态不可靠）
+if (window.xyDesk) ["pointerdown", "keydown", "wheel"].forEach(t => addEventListener(t, () => { deskInput = Date.now(); }, { capture: true, passive: true }));
 function onNote(m) {
-  if (window.xyDesk && noteOn && m.title && (document.hidden || !document.hasFocus())) window.xyDesk.notify({ title: m.title, body: m.body || "", k: m.k });      // 电脑版：窗口不在前面（最小化 / 托盘 / 别的窗口）才弹系统通知，跟手机一样前台不弹
+  if (window.xyDesk && noteOn && m.title && (+window.xyDesk.ver >= 3 || document.hidden || !document.hasFocus())) window.xyDesk.notify({ title: m.title, body: m.body || "", k: m.k, active: Date.now() - deskInput < 120000 });      // 电脑版：窗口不在前面（最小化 / 托盘 / 别的窗口）才弹系统通知，跟手机一样前台不弹；壳 v3 起由壳判断，v4 起只有最近 2 分钟在窗口里操作过才算「正看着」（hasFocus / isFocused 都不可靠）
   const pg = curPage();
   if (m.k === "xy" && !(pg && pg.key === "home")) flash(m.body, { title: "小芽" });
   if (m.k === "xz" && call.on && call.to === "xz") flash(m.body, { title: "小智" });      // 打给小智收起成悬浮球时，她答的话在球上冒一下

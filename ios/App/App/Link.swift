@@ -2,7 +2,7 @@
 // 为什么放原生：WKWebView 里的麦克风 / AudioContext 只认点击手势、会被静音键掐掉、开着麦声音走听筒、一切后台就停
 // （用户反馈：苹果小芽收不到音、朗读没声音、锁屏后断）。这里用 AVAudioEngine：声音会话 playAndRecord + 默认外放，不受静音键影响，
 // Info.plist 的 UIBackgroundModes=audio 让通话时锁屏照样收音；Claude 干活时开着「后台运行」就放一段静音保活，做完弹本地通知。
-// 网页那边：Capacitor.registerPlugin("Link")，方法 start / stop / send / ptt / live / spStop / bg / perm / status / pick，事件 msg / conn / lv / sp / live / resume / aec
+// 网页那边：Capacitor.registerPlugin("Link")，方法 start / stop / send / ptt / live / spStop / bg / perm / status / pick / fileAct，事件 msg / conn / lv / sp / live / resume / aec
 
 import ActivityKit
 import AVFoundation
@@ -37,6 +37,7 @@ public class LinkPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pick", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "takeTarget", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "fileAct", returnType: CAPPluginReturnPromise),
     ]
     let L = LinkEngine.shared
 
@@ -152,6 +153,42 @@ public class LinkPlugin: CAPPlugin, CAPBridgedPlugin {
         let ext = src.pathExtension, dst = dir.appendingPathComponent(UUID().uuidString + (ext.isEmpty ? "" : "." + ext))
         do { try FileManager.default.copyItem(at: src, to: dst) } catch { return nil }
         return ["path": dst.path, "name": name, "mime": UTType(filenameExtension: ext)?.preferredMIMEType ?? ""]
+    }
+
+    // 复制 / 分享文件（2026-11-13，安装包 v9。用户：图片、文件能不能长按复制，「复制」「分享」两个都加）：网页剪贴板放不了文件，
+    // 所以在这里把文件下到 Caches/share/<随机>/<原名>：复制 = 放进系统剪贴板（带原文件名，能粘的地方粘），分享 = 系统分享面板（微信、存到「文件」、隔空投送…）。
+    // 下载放原生：大文件不过网页桥。参数 act（copy / share）、url、name、x y w h（卡片在屏幕上的位置，iPad 分享面板的锚点）；成功回 {ok}，出错 reject 一句中文
+    @objc func fileAct(_ call: CAPPluginCall) {
+        guard let s = call.getString("url"), let u = URL(string: s) else { call.reject("文件地址不对"); return }
+        let share = call.getString("act") == "share"
+        var name = (call.getString("name") ?? "").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
+        if name.isEmpty || name.hasPrefix(".") { name = "小芽文件" + name }
+        let rect = CGRect(x: call.getDouble("x") ?? 0, y: call.getDouble("y") ?? 0, width: max(1, call.getDouble("w") ?? 1), height: max(1, call.getDouble("h") ?? 1))
+        let fm = FileManager.default
+        let root = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("share", isDirectory: true)
+        let old = Date().addingTimeInterval(-86400)          // 一天前的清掉（剪贴板里那份要留到别人粘贴，所以不是用完就删）
+        for d in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        where ((try? d.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast) < old { try? fm.removeItem(at: d) }
+        URLSession.shared.downloadTask(with: u) { tmp, resp, err in      // tmp 出了这个回调就被删，当场挪走
+            if let code = (resp as? HTTPURLResponse)?.statusCode, code != 200 { call.reject("服务器回 \(code)"); return }
+            guard let tmp = tmp else { call.reject("没下载下来：" + (err?.localizedDescription ?? "")); return }
+            let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true), f = dir.appendingPathComponent(name)
+            do { try fm.createDirectory(at: dir, withIntermediateDirectories: true); try fm.moveItem(at: tmp, to: f) }
+            catch { call.reject("存不下：" + error.localizedDescription); return }
+            DispatchQueue.main.async {
+                if share {
+                    guard var vc = self.bridge?.viewController else { call.reject("打不开分享面板"); return }
+                    while let top = vc.presentedViewController { vc = top }
+                    let a = UIActivityViewController(activityItems: [f], applicationActivities: nil)
+                    if let pop = a.popoverPresentationController { pop.sourceView = vc.view; pop.sourceRect = rect }   // iPad 没有锚点会闪退
+                    vc.present(a, animated: true)
+                } else {
+                    guard let p = NSItemProvider(contentsOf: f) else { call.reject("这个文件放不进剪贴板"); return }
+                    UIPasteboard.general.setItemProviders([p], localOnly: false, expirationDate: nil)
+                }
+                call.resolve(["ok": true])
+            }
+        }.resume()
     }
 }
 

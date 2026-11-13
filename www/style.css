@@ -311,6 +311,8 @@ audio.fv-media { background: none; }
 .att { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 82%; }
 .att img { display: block; width: auto; height: auto; max-width: 200px; max-height: 220px; min-width: 60px; min-height: 60px; object-fit: cover; border-radius: 14px; background: var(--fill-2); box-shadow: var(--shadow); }
 .att.many img { width: 96px; height: 96px; max-width: none; }
+body:not(.fine) .att img, body:not(.fine) .fs-img { -webkit-user-drag: none; }   /* 手机长按图片 = 复制菜单，别让 iOS 拎起来拖（拖起来会取消触摸，菜单出不来） */
+.att img.held, .fs-img.held, .att .fcard.held { opacity: .8; }
 .fcard { display: flex; align-items: center; gap: 10px; min-width: 180px; max-width: 240px; padding: 10px 12px; border-radius: 14px; background: var(--elev); box-shadow: var(--shadow); text-align: left; }
 .fcard .f-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--cs); color: var(--c); flex: none; }
 .fcard .f-ic .ic { width: 20px; height: 20px; }
